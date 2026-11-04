@@ -1,0 +1,6 @@
+# gradlew must keep LF endings or it fails on Linux CI runners.
+* text=auto
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.jar binary

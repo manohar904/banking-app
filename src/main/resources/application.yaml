@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: banking-app
+  datasource:
+    # Defaults match compose.yaml. Override with environment variables outside local development.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:banking}
+    username: ${DB_USERNAME:bank}
+    password: ${DB_PASSWORD:bank_dev_password}
+  jpa:
+    # Flyway owns the schema. Hibernate only checks that the entities match it.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+server:
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        same-site: lax
+        # Set SESSION_COOKIE_SECURE=true whenever the application is served over HTTPS.
+        secure: ${SESSION_COOKIE_SECURE:false}
+
+bank:
+  admin:
+    # Creates the first staff login at startup if none exists. There is deliberately no default.
+    email: ${BANK_ADMIN_EMAIL:}
+    password: ${BANK_ADMIN_PASSWORD:}

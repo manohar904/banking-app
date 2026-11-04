@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Banking</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Banking</h1>
+    <div id="user-menu" class="user-menu" hidden>
+      <span id="user-email" class="muted user-email"></span>
+      <button id="new-customer" class="primary" type="button" hidden>New customer</button>
+      <button id="change-password" type="button">Change password</button>
+      <button id="sign-out" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <section id="login-view" class="login-view" hidden>
+    <form id="login-form" class="panel login-panel" novalidate>
+      <h2>Sign in</h2>
+      <p class="form-error" data-form-error role="alert" hidden></p>
+      <label>Email
+        <input name="email" type="email" autocomplete="username" required>
+      </label>
+      <label>Password
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <div class="actions">
+        <button class="primary" type="submit">Sign in</button>
+      </div>
+    </form>
+  </section>
+
+  <main id="app" class="layout" hidden>
+    <section id="sidebar" class="sidebar" aria-labelledby="customers-heading">
+      <h2 id="customers-heading">Customers</h2>
+      <ul id="customer-list" class="customer-list"></ul>
+      <nav id="customer-pager" class="pager" aria-label="Customer pages"></nav>
+    </section>
+
+    <section id="detail" class="detail" aria-live="polite"></section>
+  </main>
+
+  <dialog id="customer-dialog">
+    <form id="customer-form" method="dialog" novalidate>
+      <h2 id="customer-dialog-title"></h2>
+      <p class="form-error" data-form-error hidden></p>
+      <label>First name
+        <input name="firstName" maxlength="100" autocomplete="off" required>
+        <span class="field-error" data-error-for="firstName"></span>
+      </label>
+      <label>Last name
+        <input name="lastName" maxlength="100" autocomplete="off" required>
+        <span class="field-error" data-error-for="lastName"></span>
+      </label>
+      <label>Email
+        <input name="email" type="email" maxlength="254" autocomplete="off" required>
+        <span class="field-error" data-error-for="email"></span>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="account-dialog">
+    <form id="account-form" method="dialog">
+      <h2>New account</h2>
+      <p class="form-error" data-form-error hidden></p>
+      <label>Account type
+        <select name="type">
+          <option value="CHECKING">Checking</option>
+          <option value="SAVINGS">Savings</option>
+        </select>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Open account</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog">
+    <form id="confirm-form" method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-message"></p>
+      <p class="form-error" data-form-error hidden></p>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="danger" type="submit">Delete</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="set-login-dialog">
+    <form id="set-login-form" method="dialog" novalidate>
+      <h2>Set sign-in password</h2>
+      <p id="set-login-message" class="muted"></p>
+      <p class="form-error" data-form-error hidden></p>
+      <label>New password
+        <input name="password" type="password" maxlength="72" autocomplete="new-password" required>
+        <span class="field-error" data-error-for="password"></span>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="password-dialog">
+    <form id="password-form" method="dialog" novalidate>
+      <h2>Change password</h2>
+      <p class="form-error" data-form-error hidden></p>
+      <label>Current password
+        <input name="currentPassword" type="password" autocomplete="current-password" required>
+        <span class="field-error" data-error-for="currentPassword"></span>
+      </label>
+      <label>New password (at least 12 characters)
+        <input name="newPassword" type="password" maxlength="72" autocomplete="new-password" required>
+        <span class="field-error" data-error-for="newPassword"></span>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

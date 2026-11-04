@@ -1,0 +1,9 @@
+.git
+.github
+.gradle
+.idea
+build
+*.log
+.env
+Dockerfile
+compose.yaml

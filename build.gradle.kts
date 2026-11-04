@@ -46,3 +46,8 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+tasks.bootRun {
+    // Supplies the local database password; see application-local.yaml.
+    systemProperty("spring.profiles.active", "local")
+}

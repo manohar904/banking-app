@@ -2,10 +2,10 @@ spring:
   application:
     name: banking-app
   datasource:
-    # Defaults match compose.yaml. Override with environment variables outside local development.
+    # Host, name and user default to compose.yaml. The password has no default; see application-local.yaml.
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:banking}
     username: ${DB_USERNAME:bank}
-    password: ${DB_PASSWORD:bank_dev_password}
+    password: ${DB_PASSWORD}
   jpa:
     # Flyway owns the schema. Hibernate only checks that the entities match it.
     hibernate:

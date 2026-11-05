@@ -289,6 +289,8 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=14d
+      # So that links in alert emails open on this computer.
+      - --web.external-url=http://localhost:${PROMETHEUS_PORT:-9090}
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
@@ -297,6 +299,32 @@ services:
       - prometheus-data:/prometheus
     restart: unless-stopped
     mem_limit: 384m
+
+  # Emails the alerts that Prometheus raises. Set up through .env; see .env.example.
+  alertmanager:
+    image: prom/alertmanager:v0.34.2
+    profiles: [monitoring]
+    entrypoint: ["sh", "/start.sh"]
+    environment:
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-}
+      ALERT_SMTP_HOST: ${ALERT_SMTP_HOST:-smtp.gmail.com:587}
+      ALERT_SMTP_USERNAME: ${ALERT_SMTP_USERNAME:-}
+      ALERT_SMTP_PASSWORD: ${ALERT_SMTP_PASSWORD:-}
+      ALERT_SMTP_REQUIRE_TLS: ${ALERT_SMTP_REQUIRE_TLS:-true}
+      ALERTMANAGER_PORT: ${ALERTMANAGER_PORT:-9093}
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./monitoring/alertmanager/start.sh:/start.sh:ro
+      - alertmanager-data:/alertmanager
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    restart: unless-stopped
+    mem_limit: 128m
 
   grafana:
     image: grafana/grafana:13.2.5
@@ -322,4 +350,5 @@ volumes:
   elasticsearch-data:
   filebeat-data:
   prometheus-data:
+  alertmanager-data:
   grafana-data:

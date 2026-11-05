@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -28,17 +28,17 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # Also runs the integration tests. GitHub's runners include the Docker they need.
+      # Also runs the integration and end-to-end tests. GitHub's runners include the Docker they need.
       - name: Build and test
         run: ./gradlew build --console=plain
 
-      - name: Build Docker image
-        run: docker build --tag banking-app:ci .
+      - name: Build Docker images
+        run: docker compose build
 
-      - name: Upload test report
+      - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-report
-          path: build/reports/tests/test/
+          name: test-reports
+          path: "*/build/reports/tests/test/"
           retention-days: 7

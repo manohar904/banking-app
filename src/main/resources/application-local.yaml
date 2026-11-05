@@ -1,4 +1,0 @@
-# Used by .\gradlew.bat bootRun. Matches the local database in compose.yaml.
-spring:
-  datasource:
-    password: ${DB_PASSWORD:bank_dev_password}

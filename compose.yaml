@@ -1,10 +1,31 @@
-# Local development stack. The default database password is for local use only.
+# Local development stack. The default passwords and secrets are for local use only.
 # Everything:     docker compose up -d --build
-# Database only:  docker compose up -d postgres    (then .\gradlew.bat bootRun)
+# Database only:  docker compose up -d db-init    (then .\gradlew.bat :<service>:bootRun for each service)
+#
+# Only the gateway is published. The services can be reached only from inside this network.
+x-service: &service
+  restart: unless-stopped
+  mem_limit: 512m
+
+x-service-env: &service-env
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_USERNAME: ${DB_USERNAME:-bank}
+  DB_PASSWORD: ${DB_PASSWORD:-bank_dev_password}
+  INTERNAL_TOKEN_SECRET: ${INTERNAL_TOKEN_SECRET:-bank_dev_internal_token_secret_local_only}
+  CUSTOMER_SERVICE_URL: http://customer-service:8081
+  ACCOUNT_SERVICE_URL: http://account-service:8082
+  AUTH_SERVICE_URL: http://auth-service:8083
+
+x-db-ready: &db-ready
+  db-init:
+    condition: service_completed_successfully
+
 services:
   postgres:
     image: postgres:18-alpine
     environment:
+      # The monolith's database. It stays in place so that its data can be migrated.
       POSTGRES_DB: ${DB_NAME:-banking}
       POSTGRES_USER: ${DB_USERNAME:-bank}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-bank_dev_password}
@@ -21,20 +42,94 @@ services:
       retries: 10
     mem_limit: 512m
 
-  app:
-    build: .
+  # Gives each service its own database. PostgreSQL's init scripts only run on an empty volume,
+  # so this runs on every start and creates only what is missing.
+  db-init:
+    image: postgres:18-alpine
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-banking}
-      DB_USERNAME: ${DB_USERNAME:-bank}
-      DB_PASSWORD: ${DB_PASSWORD:-bank_dev_password}
+      PGHOST: postgres
+      PGUSER: ${DB_USERNAME:-bank}
+      PGPASSWORD: ${DB_PASSWORD:-bank_dev_password}
+      PGDATABASE: postgres
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        for db in bank_customers bank_accounts bank_auth; do
+          psql -v ON_ERROR_STOP=1 -tAc "select 1 from pg_database where datname = '$$db'" | grep -q 1 \
+            || psql -v ON_ERROR_STOP=1 -c "create database $$db"
+        done
+
+  customer-service:
+    <<: *service
+    build:
+      context: .
+      args: {SERVICE: customer-service}
+    depends_on: *db-ready
+    environment:
+      <<: *service-env
+      DB_NAME: bank_customers
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+
+  account-service:
+    <<: *service
+    build:
+      context: .
+      args: {SERVICE: account-service}
+    depends_on: *db-ready
+    environment:
+      <<: *service-env
+      DB_NAME: bank_accounts
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+
+  auth-service:
+    <<: *service
+    build:
+      context: .
+      args: {SERVICE: auth-service}
+    depends_on: *db-ready
+    environment:
+      <<: *service-env
+      DB_NAME: bank_auth
       # Only used to create the first staff login, when none exists yet.
       BANK_ADMIN_EMAIL: ${BANK_ADMIN_EMAIL:-}
       BANK_ADMIN_PASSWORD: ${BANK_ADMIN_PASSWORD:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8083/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+
+  gateway:
+    <<: *service
+    build:
+      context: .
+      args: {SERVICE: gateway}
+    depends_on:
+      customer-service:
+        condition: service_healthy
+      account-service:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    environment:
+      INTERNAL_TOKEN_SECRET: ${INTERNAL_TOKEN_SECRET:-bank_dev_internal_token_secret_local_only}
+      CUSTOMER_SERVICE_URL: http://customer-service:8081
+      ACCOUNT_SERVICE_URL: http://account-service:8082
+      AUTH_SERVICE_URL: http://auth-service:8083
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
@@ -44,8 +139,6 @@ services:
       timeout: 3s
       retries: 6
       start_period: 30s
-    restart: unless-stopped
-    mem_limit: 768m
 
 volumes:
   postgres-data:

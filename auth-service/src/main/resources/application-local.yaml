@@ -1,0 +1,8 @@
+# Used by .\gradlew.bat :auth-service:bootRun. Matches the local database in compose.yaml.
+spring:
+  datasource:
+    password: ${DB_PASSWORD:bank_dev_password}
+
+bank:
+  internal:
+    token-secret: ${INTERNAL_TOKEN_SECRET:bank_dev_internal_token_secret_local_only}

@@ -81,6 +81,7 @@ docker compose --profile monitoring up -d --build
 | Grafana | http://localhost:3000 | `admin` / `admin` | The **Bank health** dashboard: is each service up, traffic, errors, response times |
 | Kibana | http://localhost:5601 | none | Searching logs, events and heartbeats (open **Discover**) |
 | Prometheus | http://localhost:9090 | none | Raw metrics and **Alerts** |
+| Alertmanager | http://localhost:9093 | none | Which alerts are being sent, and silencing them |
 | Elasticsearch | http://localhost:9200 | none | Stores what Kibana searches |
 
 The monitoring tools add about 4 GB of memory, and the logs take some minutes to appear after the first
@@ -106,8 +107,18 @@ ignore a repeated `eventId`, as the Logstash pipeline does.
 **Events hold ids and amounts, never names, emails or passwords.** Keep it that way when adding one,
 because they get copied to Kafka and Elasticsearch.
 
-**Alerts** show in Prometheus and on the dashboard, but nothing sends them anywhere yet. Sending email or
-chat messages needs Alertmanager.
+**Alerts** show in Prometheus and on the dashboard, and Alertmanager can email them. To turn that on:
+
+1. Copy `.env.example` to `.env` and fill it in. `.env` stays out of Git.
+2. Run `docker compose --profile monitoring up -d alertmanager`.
+3. Send yourself a test:
+   ```
+   docker compose exec alertmanager amtool alert add TestAlert severity=info --annotation=summary="Test alert from the bank" --alertmanager.url=http://localhost:9093
+   ```
+   It should arrive within about a minute. If not, `docker compose logs alertmanager` says why.
+
+You get one email per problem and service, a reminder every 4 hours while it lasts, and another when it
+has gone away. Going on holiday or doing maintenance? Silence alerts at http://localhost:9093.
 
 ## Before production
 

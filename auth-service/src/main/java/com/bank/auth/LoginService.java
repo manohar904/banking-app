@@ -1,6 +1,8 @@
 package com.bank.auth;
 
+import com.bank.common.events.DomainEvents;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -19,6 +21,7 @@ public class LoginService {
     private final AppUserRepository userRepository;
     private final CustomerServiceClient customerService;
     private final PasswordEncoder passwordEncoder;
+    private final DomainEvents events;
 
     /** Creates the customer's login, or resets the password if they already have one. */
     public void setCustomerPassword(Long customerId, String password) {
@@ -29,6 +32,7 @@ public class LoginService {
         user.changePasswordHash(hash);
         // Flushed here so an email already used by a staff login is reported as a 409.
         userRepository.saveAndFlush(user);
+        events.record("LOGIN_SET", customerId, Map.of());
     }
 
     /** Flushed here so an email already used by a staff login is reported as a 409. */
@@ -36,11 +40,15 @@ public class LoginService {
         userRepository.findByCustomerId(customerId).ifPresent(user -> {
             user.changeEmail(email);
             userRepository.saveAndFlush(user);
+            events.record("LOGIN_EMAIL_CHANGED", customerId, Map.of());
         });
     }
 
     public void deleteCustomerLogin(Long customerId) {
-        userRepository.findByCustomerId(customerId).ifPresent(userRepository::delete);
+        userRepository.findByCustomerId(customerId).ifPresent(user -> {
+            userRepository.delete(user);
+            events.record("LOGIN_REMOVED", customerId, Map.of());
+        });
     }
 
     public void changeOwnPassword(Long userId, String currentPassword, String newPassword) {
@@ -50,6 +58,7 @@ public class LoginService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The current password is incorrect.");
         }
         user.changePasswordHash(encode(newPassword));
+        events.record("PASSWORD_CHANGED", userId, Map.of());
     }
 
     String encode(String password) {

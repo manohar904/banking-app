@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /** Starts PostgreSQL and the four packaged jars, wired together the same way compose.yaml does. */
@@ -23,22 +24,26 @@ final class BankingSystem implements AutoCloseable {
     private static final String TOKEN_SECRET = "an-end-to-end-test-secret-that-is-long-enough";
 
     private final PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
+    private final KafkaContainer kafka = new KafkaContainer("apache/kafka:4.3.2");
     private final List<Process> processes = new ArrayList<>();
     private final HttpClient http = HttpClient.newHttpClient();
     final int gatewayPort;
     final int customerPort;
     final int accountPort;
     final int authPort;
+    final int gatewayManagementPort;
 
     BankingSystem() throws Exception {
         gatewayPort = freePort();
         customerPort = freePort();
         accountPort = freePort();
         authPort = freePort();
+        gatewayManagementPort = freePort();
     }
 
     void start(String adminEmail, String adminPassword) throws Exception {
         postgres.start();
+        kafka.start();
         for (String database : List.of("bank_customers", "bank_accounts", "bank_auth")) {
             postgres.execInContainer("psql", "-U", postgres.getUsername(), "-d", postgres.getDatabaseName(),
                     "-c", "create database " + database);
@@ -52,7 +57,7 @@ final class BankingSystem implements AutoCloseable {
         launch("account-service", accountPort, urls, Map.of("DB_NAME", "bank_accounts"));
         launch("auth-service", authPort, urls, Map.of(
                 "DB_NAME", "bank_auth", "BANK_ADMIN_EMAIL", adminEmail, "BANK_ADMIN_PASSWORD", adminPassword));
-        launch("gateway", gatewayPort, urls, Map.of());
+        launch("gateway", gatewayPort, urls, Map.of("MANAGEMENT_SERVER_PORT", String.valueOf(gatewayManagementPort)));
 
         awaitUp("customer-service", customerPort, "/actuator/health");
         awaitUp("account-service", accountPort, "/actuator/health");
@@ -70,6 +75,9 @@ final class BankingSystem implements AutoCloseable {
         env.putAll(extra);
         env.put("SERVER_PORT", String.valueOf(port));
         env.put("INTERNAL_TOKEN_SECRET", TOKEN_SECRET);
+        env.put("KAFKA_BOOTSTRAP_SERVERS", kafka.getBootstrapServers());
+        env.put("BANK_HEALTH_HEARTBEATINTERVAL", "2000");
+        env.put("BANK_EVENTS_RELAYDELAY", "200");
         env.put("DB_HOST", postgres.getHost());
         env.put("DB_PORT", String.valueOf(postgres.getMappedPort(5432)));
         env.put("DB_USERNAME", postgres.getUsername());
@@ -96,6 +104,10 @@ final class BankingSystem implements AutoCloseable {
         throw new IllegalStateException(service + " did not start. Its log:\n" + Files.readString(logFile(service)));
     }
 
+    String kafkaBootstrapServers() {
+        return kafka.getBootstrapServers();
+    }
+
     private static Path logFile(String service) {
         return Path.of("build", "e2e-logs", service + ".log");
     }
@@ -109,6 +121,7 @@ final class BankingSystem implements AutoCloseable {
     @Override
     public void close() {
         processes.forEach(Process::destroy);
+        kafka.stop();
         postgres.stop();
     }
 }

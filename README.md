@@ -70,12 +70,54 @@ is down, but opening one fails with a 503. If `auth-service` is down nobody can 
 updates and deletes fail, but existing sessions can still read. The gateway keeps sessions in memory,
 so restarting it signs everyone out, and it can't yet run as more than one instance.
 
+## Events and monitoring
+
+```
+docker compose --profile monitoring up -d --build
+```
+
+| Tool | Address | Sign-in | What it's for |
+|---|---|---|---|
+| Grafana | http://localhost:3000 | `admin` / `admin` | The **Bank health** dashboard: is each service up, traffic, errors, response times |
+| Kibana | http://localhost:5601 | none | Searching logs, events and heartbeats (open **Discover**) |
+| Prometheus | http://localhost:9090 | none | Raw metrics and **Alerts** |
+| Elasticsearch | http://localhost:9200 | none | Stores what Kibana searches |
+
+The monitoring tools add about 4 GB of memory, and the logs take some minutes to appear after the first
+start. Without the profile, the bank and Kafka run alone. To use your own Grafana password, set
+`GRAFANA_ADMIN_PASSWORD` before its first start.
+
+**Kafka topics**
+
+| Topic | Contains | Written by |
+|---|---|---|
+| `bank.events` | What happened, such as `MONEY_DEPOSITED` or `CUSTOMER_CREATED` | Each service's outbox |
+| `bank.health` | A heartbeat from every service every 30 seconds | Each service |
+| `bank.logs` | Every service's log lines | Filebeat |
+
+Logstash copies all three into Elasticsearch, which keeps 14 days. Kafka keeps 7 days.
+
+**Events can't get out of step with the data.** A service writes an event to its own `outbox_events`
+table in the same transaction as the change, and a background job then sends it to Kafka. So if Kafka is
+down, banking carries on and events wait: nothing is lost, and the **Events waiting for Kafka** panel
+shows the queue. An event can be delivered twice after a crash, so anything consuming the topic should
+ignore a repeated `eventId`, as the Logstash pipeline does.
+
+**Events hold ids and amounts, never names, emails or passwords.** Keep it that way when adding one,
+because they get copied to Kafka and Elasticsearch.
+
+**Alerts** show in Prometheus and on the dashboard, but nothing sends them anywhere yet. Sending email or
+chat messages needs Alertmanager.
+
 ## Before production
 
 This is set up for local development. Before real use:
 
-- Set your own `INTERNAL_TOKEN_SECRET`, `DB_PASSWORD` and `SESSION_COOKIE_SECURE=true`, and serve the
-  gateway over HTTPS.
+- Set your own `INTERNAL_TOKEN_SECRET`, `DB_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and
+  `SESSION_COOKIE_SECURE=true`, and serve the gateway over HTTPS.
+- Turn on security in Elasticsearch, Kibana and Kafka. They have no passwords here, and are only safe
+  because they are published to this computer alone. Kafka also runs as a single broker, so it has no
+  second copy of anything.
 - Add TLS between services: passwords travel from the gateway to `auth-service` over plain HTTP, which
   is only as private as the Docker network.
 - Give each service its own database user. They currently share one, so only convention keeps a

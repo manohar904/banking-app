@@ -51,7 +51,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * <p>The tests are deliberately not @Transactional: commits, rollbacks and constraint failures at
  * commit time are what is being tested. Each test creates its own account instead.
  */
-@SpringBootTest(properties = "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256")
+@SpringBootTest(properties = {
+        "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
+        "bank.kafka.enabled=false"
+})
 @AutoConfigureMockMvc
 @Testcontainers
 class AccountApiIntegrationTest {

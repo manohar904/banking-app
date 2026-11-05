@@ -13,6 +13,7 @@ import com.bank.auth.CustomerServiceClient;
 import com.bank.common.ResourceNotFoundException;
 import com.bank.common.security.InternalTokens;
 import com.jayway.jsonpath.JsonPath;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  */
 @SpringBootTest(properties = {
         "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
+        "bank.kafka.enabled=false",
         "bank.admin.email=Boss@Example.com",
         "bank.admin.password=" + AuthIntegrationTest.STAFF_PASSWORD
 })
@@ -180,6 +182,24 @@ class AuthIntegrationTest {
         deleteLogin(customer);
 
         mockMvc.perform(as(token, get("/api/auth/me"))).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void eventsNeverContainPasswordsOrEmails() throws Exception {
+        long customer = newCustomerId();
+        String email = newLogin(customer);
+        changeEmail(customer, uniqueEmail());
+        deleteLogin(customer);
+
+        List<String> events = jdbc.queryForList(
+                "select payload from outbox_events where aggregate_id = ? order by id", String.class,
+                String.valueOf(customer));
+
+        assertThat(events).hasSize(3);
+        assertThat(events.get(0)).contains("LOGIN_SET");
+        assertThat(events.get(1)).contains("LOGIN_EMAIL_CHANGED");
+        assertThat(events.get(2)).contains("LOGIN_REMOVED");
+        assertThat(String.join("", events)).doesNotContain(PASSWORD, email, "@example.com", "bcrypt");
     }
 
     @Test

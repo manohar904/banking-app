@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: account-service
+  datasource:
+    # This service alone uses this database. The password has no default; see application-local.yaml.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:bank_accounts}
+    username: ${DB_USERNAME:bank}
+    password: ${DB_PASSWORD}
+  jpa:
+    # Flyway owns the schema. Hibernate only checks that the entities match it.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+server:
+  port: 8082
+
+bank:
+  internal:
+    # Signs the tokens services use with each other. There is deliberately no default.
+    token-secret: ${INTERNAL_TOKEN_SECRET}
+  services:
+    customer-url: ${CUSTOMER_SERVICE_URL:http://localhost:8081}

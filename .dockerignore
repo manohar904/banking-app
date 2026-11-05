@@ -2,8 +2,9 @@
 .github
 .gradle
 .idea
-build
-*.log
+**/build
+**/*.log
 .env
 Dockerfile
 compose.yaml
+scripts

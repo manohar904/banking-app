@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: auth-service
+  datasource:
+    # This service alone uses this database. The password has no default; see application-local.yaml.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:bank_auth}
+    username: ${DB_USERNAME:bank}
+    password: ${DB_PASSWORD}
+  jpa:
+    # Flyway owns the schema. Hibernate only checks that the entities match it.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+server:
+  port: 8083
+
+bank:
+  internal:
+    # Signs the tokens services use with each other. There is deliberately no default.
+    token-secret: ${INTERNAL_TOKEN_SECRET}
+  services:
+    customer-url: ${CUSTOMER_SERVICE_URL:http://localhost:8081}
+  admin:
+    # Creates the first staff login at startup if none exists. There is deliberately no default.
+    email: ${BANK_ADMIN_EMAIL:}
+    password: ${BANK_ADMIN_PASSWORD:}

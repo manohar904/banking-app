@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.bank.common.ConflictException;
+import com.bank.common.events.DomainEvents;
 import java.math.BigDecimal;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +40,9 @@ class AccountServiceTest {
 
     @Mock
     private CustomerServiceClient customerService;
+
+    @Mock
+    private DomainEvents events;
 
     @InjectMocks
     private AccountService accountService;

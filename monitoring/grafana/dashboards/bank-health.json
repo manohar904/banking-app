@@ -1,0 +1,119 @@
+{
+  "uid": "bank-health",
+  "title": "Bank health",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Is each service healthy?",
+      "description": "UP means the service answers and says it is healthy, including its database.",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 0, "w": 16, "h": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "min by (job) (up) * on (job) group_left () (min by (job) (bank_health_status) or min by (job) (up) * 0)", "legendFormat": "{{job}}", "instant": true}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 2,
+      "title": "Alerts firing",
+      "type": "stat",
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)", "instant": true}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 3,
+      "title": "Events waiting for Kafka",
+      "description": "Should stay near zero. If it keeps rising, Kafka is probably down. Nothing is lost: events wait here.",
+      "type": "stat",
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum(bank_outbox_pending)", "instant": true}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 50}, {"color": "red", "value": 100}]}}},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 4,
+      "title": "Requests per second",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (job) (rate(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[5m]))", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 5,
+      "title": "Server errors per second (5xx)",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (job) (rate(http_server_requests_seconds_count{status=~\"5..\"}[5m])) or vector(0)", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 6,
+      "title": "Response time, 95th percentile",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 13, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (job, le) (rate(http_server_requests_seconds_bucket{uri!~\"/actuator.*\"}[5m])))", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 7,
+      "title": "Sign-ins per minute",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 13, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (outcome) (rate(bank_signins_total[5m])) * 60", "legendFormat": "{{outcome}}"}]
+    },
+    {
+      "id": 8,
+      "title": "Java memory used",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 21, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (job) (jvm_memory_used_bytes{area=\"heap\"})", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "id": 9,
+      "title": "Database connections in use",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 21, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (job) (hikaricp_connections_active)", "legendFormat": "{{job}}"}]
+    },
+    {
+      "id": 10,
+      "title": "Recent warnings and errors in the logs",
+      "type": "logs",
+      "gridPos": {"x": 0, "y": 29, "w": 24, "h": 10},
+      "datasource": {"type": "elasticsearch", "uid": "bank-logs"},
+      "targets": [
+        {
+          "refId": "A",
+          "query": "log.level:(WARN OR ERROR)",
+          "timeField": "@timestamp",
+          "metrics": [{"id": "1", "type": "logs", "settings": {"limit": "100"}}],
+          "bucketAggs": []
+        }
+      ],
+      "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"}
+    }
+  ]
+}

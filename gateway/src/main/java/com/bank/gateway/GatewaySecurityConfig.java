@@ -27,6 +27,8 @@ public class GatewaySecurityConfig {
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers("/", "/index.html", "/app.js", "/styles.css", "/favicon.ico", "/error")
                         .permitAll()
+                        // Only served on the private management port. On the main port these are a 404.
+                        .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().denyAll())
                 // The front end reads the token from a cookie and sends it back in a header.

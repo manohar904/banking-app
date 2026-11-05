@@ -6,7 +6,18 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -364,6 +375,124 @@ class BankingSystemTest {
         assertThat(browser().signIn(email, PASSWORD).status()).isEqualTo(401);
         // A session that was already open loses access straight away.
         assertThat(customer.get("/api/auth/me").status()).isEqualTo(401);
+    }
+
+    // Kafka and monitoring.
+
+    @Test
+    void bankingChangesReachKafkaWithTheExactAmountsAndNoPersonalData() throws Exception {
+        String email = uniqueEmail();
+        long customer = newCustomer(email);
+        long account = newAccount(customer);
+        assertThat(staff.post("/api/accounts/" + account + "/deposit", "{\"amount\": 100.10}").status()).isEqualTo(200);
+
+        List<String> forAccount = new ArrayList<>();
+        List<String> forCustomer = new ArrayList<>();
+        readTopic("bank.events", record -> {
+            if (String.valueOf(account).equals(record.key()) && record.value().contains("account-service")) {
+                forAccount.add(record.value());
+            }
+            if (String.valueOf(customer).equals(record.key()) && record.value().contains("customer-service")) {
+                forCustomer.add(record.value());
+            }
+            return forAccount.size() >= 2 && !forCustomer.isEmpty();
+        });
+
+        assertThat(forAccount.get(0)).contains("ACCOUNT_OPENED");
+        assertThat(forAccount.get(1)).contains("MONEY_DEPOSITED", "\"amount\":100.10", "\"balanceAfter\":100.10");
+        assertThat(forCustomer.get(0)).contains("CUSTOMER_CREATED").doesNotContain(email, "Lovelace");
+    }
+
+    @Test
+    void everyServiceReportsItsHealthToKafka() throws Exception {
+        Set<String> healthy = new HashSet<>();
+        readTopic("bank.health", record -> {
+            if (record.value().contains("\"status\":\"UP\"")) {
+                healthy.add(record.key());
+            }
+            return healthy.size() == 4;
+        });
+
+        assertThat(healthy).containsExactlyInAnyOrder("gateway", "customer-service", "account-service", "auth-service");
+    }
+
+    @Test
+    void everyServiceExposesMetricsIncludingItsHealth() throws Exception {
+        for (int port : new int[] {system.customerPort, system.accountPort, system.authPort, system.gatewayManagementPort}) {
+            String metrics = awaitMetric(port, "bank_health_status 1");
+            assertThat(metrics).as("port %d", port).contains("jvm_memory_used_bytes", "http_server_requests_seconds");
+        }
+        assertThat(awaitMetric(system.accountPort, "bank_outbox_pending")).contains("hikaricp_connections");
+    }
+
+    @Test
+    void failedAndSuccessfulSignInsAreCounted() throws Exception {
+        browser().signIn(STAFF_EMAIL, "not-the-password");
+
+        String metrics = awaitMetric(system.authPort, "bank_signins_total");
+
+        assertThat(metrics).contains("outcome=\"failure\"", "outcome=\"success\"");
+    }
+
+    @Test
+    void metricsAreNotPublicOnTheGatewaysMainPort() throws Exception {
+        assertThat(browser().get("/actuator/prometheus").body()).doesNotContain("jvm_memory");
+        assertThat(staff.get("/actuator/prometheus").body()).doesNotContain("jvm_memory");
+        assertThat(browser().get("/actuator/env").status()).isEqualTo(401);
+    }
+
+    @Test
+    void passwordsNeverAppearInEventsOrHealthMessages() throws Exception {
+        Holder ada = holder();
+        signedIn(ada.email(), PASSWORD);
+
+        List<String> everything = new ArrayList<>();
+        readTopic("bank.events", record -> {
+            everything.add(record.value());
+            return everything.toString().contains("LOGIN_SET");
+        });
+
+        assertThat(everything.toString()).doesNotContain(PASSWORD, STAFF_PASSWORD, "bcrypt");
+    }
+
+    /** Reads a topic from the start until the condition holds. Fails if it never does. */
+    private static void readTopic(String topic,
+            java.util.function.Predicate<ConsumerRecord<String, String>> done) {
+        Map<String, Object> config = Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, system.kafkaBootstrapServers(),
+                ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        try (KafkaConsumer<String, String> consumer =
+                new KafkaConsumer<>(config, new StringDeserializer(), new StringDeserializer())) {
+            consumer.subscribe(List.of(topic));
+            Instant deadline = Instant.now().plusSeconds(60);
+            while (Instant.now().isBefore(deadline)) {
+                for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {
+                    if (done.test(record)) {
+                        return;
+                    }
+                }
+            }
+        }
+        throw new AssertionError("What the test was waiting for never arrived on " + topic);
+    }
+
+    /** Scrapes like Prometheus does, waiting for a metric that is reported in the background. */
+    private static String awaitMetric(int port, String expected) throws Exception {
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder(
+                URI.create("http://127.0.0.1:" + port + "/actuator/prometheus")).build();
+        Instant deadline = Instant.now().plusSeconds(30);
+        String metrics = "";
+        while (Instant.now().isBefore(deadline)) {
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            metrics = response.body();
+            if (response.statusCode() == 200 && metrics.contains(expected)) {
+                return metrics;
+            }
+            Thread.sleep(500);
+        }
+        throw new AssertionError("Port " + port + " never reported " + expected + ". Last answer:\n" + metrics);
     }
 
     @Test

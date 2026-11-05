@@ -30,7 +30,11 @@ import org.springframework.test.context.DynamicPropertySource;
 
 /** Runs the real gateway on a real port, with small stand-ins for the services behind it. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256")
+        properties = {
+                "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
+                "bank.kafka.enabled=false",
+                "management.server.port=0"
+        })
 class GatewayTest {
 
     private static final StubService customers = new StubService("customer-service");

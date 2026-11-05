@@ -2,15 +2,18 @@ package com.bank.customer;
 
 import com.bank.common.ConflictException;
 import com.bank.common.ResourceNotFoundException;
+import com.bank.common.events.DomainEvents;
 import com.bank.customer.dto.CustomerRequest;
 import com.bank.customer.dto.CustomerResponse;
 import java.util.Locale;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -20,6 +23,8 @@ public class CustomerService {
     private final CustomerRepository customerRepository;
     private final AccountServiceClient accountService;
     private final AuthServiceClient authService;
+    private final DomainEvents events;
+    private final TransactionTemplate transactions;
 
     public CustomerResponse create(CustomerRequest request) {
         String email = normalizeEmail(request.email());
@@ -27,7 +32,10 @@ public class CustomerService {
             throw new ConflictException("A customer with this email already exists.");
         }
         Customer customer = new Customer(request.firstName(), request.lastName(), email);
-        return CustomerResponse.from(customerRepository.saveAndFlush(customer));
+        Customer saved = customerRepository.saveAndFlush(customer);
+        // Ids only: names and emails stay out of Kafka and Elasticsearch.
+        events.record("CUSTOMER_CREATED", saved.getId(), Map.of());
+        return CustomerResponse.from(saved);
     }
 
     @Transactional(readOnly = true)
@@ -52,6 +60,7 @@ public class CustomerService {
         // this row stays locked and a clash with a staff login rolls this update back as a 409.
         // Called even if the email is unchanged, so saving again repairs a login left out of step.
         authService.changeLoginEmail(id, email);
+        events.record("CUSTOMER_UPDATED", id, Map.of());
         return CustomerResponse.from(saved);
     }
 
@@ -65,7 +74,10 @@ public class CustomerService {
         // Answers 409 if the customer still has accounts, and blocks new ones from here on.
         accountService.retireCustomer(id);
         authService.deleteLogin(id);
-        customerRepository.deleteById(id);
+        transactions.executeWithoutResult(status -> {
+            customerRepository.deleteById(id);
+            events.record("CUSTOMER_DELETED", id, Map.of());
+        });
     }
 
     private Customer findCustomer(Long id) {

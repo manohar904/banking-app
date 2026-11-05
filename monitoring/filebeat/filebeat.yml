@@ -1,0 +1,26 @@
+# Only containers labelled co.elastic.logs/enabled=true in compose.yaml are collected.
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      hints.enabled: true
+      hints.default_config:
+        enabled: false
+        type: filestream
+        id: container-${data.container.id}
+        paths:
+          - /var/lib/docker/containers/${data.container.id}/*.log
+        parsers:
+          - container:
+              stream: all
+              format: docker
+
+processors:
+  - drop_fields:
+      fields: ["agent", "ecs", "input", "host", "log", "stream"]
+      ignore_missing: true
+
+output.kafka:
+  hosts: ["kafka:9092"]
+  topic: bank.logs
+  required_acks: 1
+  compression: gzip

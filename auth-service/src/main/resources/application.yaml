@@ -1,6 +1,19 @@
 spring:
   application:
     name: auth-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    producer:
+      acks: all
+      properties:
+        # Give up quickly: these sends happen in the background and are tried again.
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+  task:
+    scheduling:
+      pool:
+        size: 2
   datasource:
     # This service alone uses this database. The password has no default; see application-local.yaml.
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:bank_auth}
@@ -14,6 +27,16 @@ spring:
 
 server:
   port: 8083
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
 
 bank:
   internal:

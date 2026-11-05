@@ -3,6 +3,7 @@ package com.bank.auth;
 import com.bank.auth.dto.CredentialsRequest;
 import com.bank.auth.dto.EmailRequest;
 import com.bank.auth.dto.VerifiedUserResponse;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -27,6 +28,7 @@ public class InternalLoginController {
 
     private final AuthenticationManager credentialChecker;
     private final LoginService loginService;
+    private final MeterRegistry metrics;
 
     /** Checks a password for the gateway, which then holds the session. */
     @PostMapping("/authentications")
@@ -35,8 +37,10 @@ public class InternalLoginController {
             BankUserDetails user = (BankUserDetails) credentialChecker.authenticate(
                             UsernamePasswordAuthenticationToken.unauthenticated(request.email(), request.password()))
                     .getPrincipal();
+            metrics.counter("bank.signins", "outcome", "success").increment();
             return VerifiedUserResponse.from(user);
         } catch (AuthenticationException e) {
+            metrics.counter("bank.signins", "outcome", "failure").increment();
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Incorrect email or password.");
         }
     }

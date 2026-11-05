@@ -11,6 +11,13 @@ dependencies {
     // For the exception types mapped in GlobalExceptionHandler.
     api("org.springframework:spring-tx")
     api("org.springframework.data:spring-data-commons")
+    // For recording events in each service's own database.
+    api("org.springframework:spring-jdbc")
+
+    api("org.springframework.boot:spring-boot-starter-kafka")
+    api("org.springframework.boot:spring-boot-starter-actuator")
+    api("org.springframework.boot:spring-boot-starter-micrometer-metrics")
+    api("io.micrometer:micrometer-registry-prometheus")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }

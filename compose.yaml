@@ -1,11 +1,15 @@
 # Local development stack. The default passwords and secrets are for local use only.
-# Everything:     docker compose up -d --build
-# Database only:  docker compose up -d db-init    (then .\gradlew.bat :<service>:bootRun for each service)
+# The bank:        docker compose up -d --build
+# With monitoring: docker compose --profile monitoring up -d --build    (adds about 4 GB; see README.md)
+# Database only:   docker compose up -d db-init kafka    (then .\gradlew.bat :<service>:bootRun for each service)
 #
 # Only the gateway is published. The services can be reached only from inside this network.
 x-service: &service
   restart: unless-stopped
   mem_limit: 512m
+  labels:
+    # Filebeat only collects logs from containers that carry this label.
+    co.elastic.logs/enabled: "true"
 
 x-service-env: &service-env
   DB_HOST: postgres
@@ -16,6 +20,9 @@ x-service-env: &service-env
   CUSTOMER_SERVICE_URL: http://customer-service:8081
   ACCOUNT_SERVICE_URL: http://account-service:8082
   AUTH_SERVICE_URL: http://auth-service:8083
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  # One JSON object per log line, which is what Elasticsearch needs.
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
 
 x-db-ready: &db-ready
   db-init:
@@ -61,6 +68,37 @@ services:
           psql -v ON_ERROR_STOP=1 -tAc "select 1 from pg_database where datname = '$$db'" | grep -q 1 \
             || psql -v ON_ERROR_STOP=1 -c "create database $$db"
         done
+
+  # Single-node Kafka. The services do not wait for it: their events are kept until it is back.
+  kafka:
+    image: apache/kafka:4.3.2
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT:-9094}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # One broker, so nothing can have more than one copy.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    ports:
+      - "127.0.0.1:${KAFKA_PORT:-9094}:9094"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 768m
 
   customer-service:
     <<: *service
@@ -130,6 +168,8 @@ services:
       CUSTOMER_SERVICE_URL: http://customer-service:8081
       ACCOUNT_SERVICE_URL: http://account-service:8082
       AUTH_SERVICE_URL: http://auth-service:8083
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
@@ -140,5 +180,146 @@ services:
       retries: 6
       start_period: 30s
 
+  # --- Monitoring. Everything below only starts with --profile monitoring. ---
+  # Published to this computer only, and without passwords on Elasticsearch and Kibana: for local use.
+
+  elasticsearch:
+    image: elasticsearch:9.5.5
+    profiles: [monitoring]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms768m -Xmx768m
+    ports:
+      - "127.0.0.1:${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    restart: unless-stopped
+    mem_limit: 1536m
+
+  # Moves logs, events and heartbeats from Kafka to Elasticsearch.
+  logstash:
+    image: logstash:9.5.5
+    profiles: [monitoring]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      # Not before this: indices created earlier would miss the retention settings.
+      elasticsearch-setup:
+        condition: service_completed_successfully
+    environment:
+      LS_JAVA_OPTS: -Xms384m -Xmx384m
+      xpack.monitoring.enabled: "false"
+    volumes:
+      - ./monitoring/logstash/pipeline.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    restart: unless-stopped
+    mem_limit: 768m
+
+  # Reads the bank's container logs and puts them on Kafka.
+  filebeat:
+    image: elastic/filebeat:9.5.6
+    profiles: [monitoring]
+    user: root
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./monitoring/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - filebeat-data:/usr/share/filebeat/data
+    restart: unless-stopped
+    mem_limit: 256m
+
+  kibana:
+    image: kibana:9.5.5
+    profiles: [monitoring]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      TELEMETRY_OPTIN: "false"
+      # Kibana crashes during start-up with 512 MB.
+      NODE_OPTIONS: --max-old-space-size=1024
+    ports:
+      - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:5601/api/status > /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+    restart: unless-stopped
+    mem_limit: 1536m
+
+  # Sets how long Elasticsearch keeps things, then stops.
+  elasticsearch-setup:
+    image: curlimages/curl:8.17.0
+    profiles: [monitoring]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    entrypoint: ["sh", "/setup.sh"]
+    volumes:
+      - ./monitoring/setup-elasticsearch.sh:/setup.sh:ro
+
+  # Creates the ready-made views in Kibana, then stops.
+  kibana-setup:
+    image: curlimages/curl:8.17.0
+    profiles: [monitoring]
+    depends_on:
+      kibana:
+        condition: service_healthy
+    entrypoint: ["sh", "/setup.sh"]
+    volumes:
+      - ./monitoring/setup-kibana.sh:/setup.sh:ro
+
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=14d
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    mem_limit: 384m
+
+  grafana:
+    image: grafana/grafana:13.2.5
+    profiles: [monitoring]
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+    mem_limit: 384m
+
 volumes:
   postgres-data:
+  kafka-data:
+  elasticsearch-data:
+  filebeat-data:
+  prometheus-data:
+  grafana-data:

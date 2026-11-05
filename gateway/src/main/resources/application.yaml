@@ -1,6 +1,32 @@
 spring:
   application:
     name: gateway
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    producer:
+      acks: all
+      properties:
+        # Give up quickly: these sends happen in the background and are tried again.
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+  task:
+    scheduling:
+      pool:
+        size: 2
+
+management:
+  # A separate port, never published: the main port is open to anyone who can reach the bank.
+  server:
+    port: 8090
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
 
 server:
   port: 8080

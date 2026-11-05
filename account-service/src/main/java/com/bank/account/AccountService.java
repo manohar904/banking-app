@@ -5,9 +5,11 @@ import com.bank.account.dto.CreateAccountRequest;
 import com.bank.account.dto.TransactionResponse;
 import com.bank.common.ConflictException;
 import com.bank.common.ResourceNotFoundException;
+import com.bank.common.events.DomainEvents;
 import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.util.Locale;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -25,6 +27,7 @@ public class AccountService {
     private final AccountTransactionRepository transactionRepository;
     private final RetiredCustomers retiredCustomers;
     private final CustomerServiceClient customerService;
+    private final DomainEvents events;
     private final SecureRandom random = new SecureRandom();
 
     public AccountResponse create(CreateAccountRequest request) {
@@ -36,7 +39,9 @@ public class AccountService {
             throw new ResourceNotFoundException("Customer " + customerId + " not found.");
         }
         Account account = new Account(customerId, generateAccountNumber(), request.type());
-        return AccountResponse.from(accountRepository.saveAndFlush(account));
+        Account saved = accountRepository.saveAndFlush(account);
+        events.record("ACCOUNT_OPENED", saved.getId(), Map.of("customerId", customerId, "type", saved.getType().name()));
+        return AccountResponse.from(saved);
     }
 
     @Transactional(readOnly = true)
@@ -79,6 +84,7 @@ public class AccountService {
             throw new ConflictException("An account with transaction history cannot be deleted.");
         }
         accountRepository.delete(account);
+        events.record("ACCOUNT_CLOSED", id, Map.of("customerId", account.getCustomerId()));
     }
 
     /** Part of deleting a customer: from here on they cannot get new accounts. Safe to repeat. */
@@ -97,6 +103,8 @@ public class AccountService {
     private AccountResponse saveWithLedgerEntry(Account account, TransactionType type, BigDecimal amount) {
         Account saved = accountRepository.saveAndFlush(account);
         transactionRepository.save(new AccountTransaction(saved, type, amount));
+        events.record(type == TransactionType.DEPOSIT ? "MONEY_DEPOSITED" : "MONEY_WITHDRAWN", saved.getId(),
+                Map.of("amount", amount, "balanceAfter", saved.getBalance()));
         return AccountResponse.from(saved);
     }
 

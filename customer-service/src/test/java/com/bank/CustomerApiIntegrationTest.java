@@ -52,7 +52,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * Runs the service against real PostgreSQL, through its real security rules. Requires Docker. The
  * other services are stubbed; e2e-tests covers them working together.
  */
-@SpringBootTest(properties = "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256")
+@SpringBootTest(properties = {
+        "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
+        "bank.kafka.enabled=false"
+})
 @AutoConfigureMockMvc
 @Testcontainers
 class CustomerApiIntegrationTest {
@@ -116,6 +119,33 @@ class CustomerApiIntegrationTest {
         assertThat(Collections.frequency(statuses, 201)).isEqualTo(1);
         assertThat(Collections.frequency(statuses, 409)).isEqualTo(19);
         assertThat(customersWithEmail(email)).isEqualTo(1);
+    }
+
+    @Test
+    void eventsCarryIdsButNoPersonalData() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+        mockMvc.perform(asStaff(delete("/api/customers/{id}", customer))).andExpect(status().isNoContent());
+
+        List<String> events = jdbc.queryForList(
+                "select payload from outbox_events where aggregate_id = ? order by id", String.class,
+                String.valueOf(customer));
+
+        assertThat(events).hasSize(2);
+        assertThat(events.get(0)).contains("CUSTOMER_CREATED").doesNotContain(email, "Lovelace");
+        assertThat(events.get(1)).contains("CUSTOMER_DELETED");
+    }
+
+    @Test
+    void refusedDeleteRecordsNoEvent() throws Exception {
+        long customer = createCustomer();
+        doThrow(new ConflictException("A customer who still has accounts cannot be deleted."))
+                .when(accountService).retireCustomer(customer);
+
+        mockMvc.perform(asStaff(delete("/api/customers/{id}", customer))).andExpect(status().isConflict());
+
+        assertThat(jdbc.queryForList("select payload from outbox_events where aggregate_id = ?", String.class,
+                String.valueOf(customer))).hasSize(1);
     }
 
     @Test

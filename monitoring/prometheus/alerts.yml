@@ -8,6 +8,13 @@ groups:
           severity: critical
         annotations:
           summary: "{{ $labels.job }} cannot be reached"
+      - alert: KafkaDown
+        expr: probe_success{job="kafka-probe"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka cannot be reached. Banking keeps working and events wait in the services' databases, but nothing reaches Kibana until it is back."
       - alert: ServiceUnhealthy
         expr: bank_health_status == 0
         for: 1m

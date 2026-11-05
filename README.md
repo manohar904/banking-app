@@ -117,6 +117,10 @@ because they get copied to Kafka and Elasticsearch.
    ```
    It should arrive within about a minute. If not, `docker compose logs alertmanager` says why.
 
+The alerts are `ServiceDown`, `ServiceUnhealthy`, `KafkaDown`, `HighErrorRate`, `EventsNotReachingKafka`
+and `ManyFailedSignIns`. `KafkaDown` only checks that Kafka accepts connections, so a broker that accepts
+them but has stopped working shows up later, as `EventsNotReachingKafka`.
+
 You get one email per problem and service, a reminder every 4 hours while it lasts, and another when it
 has gone away. Going on holiday or doing maintenance? Silence alerts at http://localhost:9093.
 

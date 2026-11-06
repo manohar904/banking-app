@@ -15,7 +15,8 @@ import java.nio.charset.StandardCharsets;
 /** Talks to the gateway the way the front end does: keeps cookies and sends the CSRF token back. */
 final class Browser {
 
-    record Response(int status, String body) {
+    /** replayed: the answer to an earlier request with the same Idempotency-Key. */
+    record Response(int status, String body, boolean replayed) {
         <T> T read(String jsonPath) {
             return JsonPath.read(body, jsonPath);
         }
@@ -69,11 +70,19 @@ final class Browser {
                 .POST(BodyPublishers.noBody()));
     }
 
+    Response postWithKey(String path, String json, String idempotencyKey) throws Exception {
+        return send(writeRequest("POST", path, json).header("Idempotency-Key", idempotencyKey));
+    }
+
     private Response write(String method, String path, String json) throws Exception {
-        return send(request(path)
+        return send(writeRequest(method, path, json));
+    }
+
+    private HttpRequest.Builder writeRequest(String method, String path, String json) throws Exception {
+        return request(path)
                 .header("Content-Type", "application/json")
                 .header("X-XSRF-TOKEN", csrfToken())
-                .method(method, BodyPublishers.ofString(json)));
+                .method(method, BodyPublishers.ofString(json));
     }
 
     private HttpRequest.Builder request(String path) {
@@ -82,7 +91,8 @@ final class Browser {
 
     private Response send(HttpRequest.Builder request) throws Exception {
         HttpResponse<String> response = client.send(request.build(), HttpResponse.BodyHandlers.ofString());
-        return new Response(response.statusCode(), response.body());
+        return new Response(response.statusCode(), response.body(),
+                response.headers().firstValue("Idempotent-Replayed").isPresent());
     }
 
     private String csrfToken() throws Exception {

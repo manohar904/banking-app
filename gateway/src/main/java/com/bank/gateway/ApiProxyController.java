@@ -1,5 +1,6 @@
 package com.bank.gateway;
 
+import com.bank.common.idempotency.IdempotencyFilter;
 import com.bank.common.security.InternalTokens;
 import com.bank.common.security.Problems;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,7 +25,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Forwards API calls to the service that owns the data, swapping the browser's session for a
- * short-lived internal token. Requests are never retried: a repeated withdrawal would take money twice.
+ * short-lived internal token. Requests are never retried here: without an Idempotency-Key a repeated
+ * withdrawal would take money twice. Callers that send one can safely send the request again.
  */
 @RestController
 @Slf4j
@@ -32,8 +34,10 @@ public class ApiProxyController {
 
     /** Allow-lists, so cookies and any Authorization header a caller made up never reach a service. */
     private static final List<String> REQUEST_HEADERS =
-            List.of(HttpHeaders.ACCEPT, HttpHeaders.ACCEPT_LANGUAGE, HttpHeaders.CONTENT_TYPE);
-    private static final List<String> RESPONSE_HEADERS = List.of(HttpHeaders.CONTENT_TYPE, HttpHeaders.LOCATION);
+            List.of(HttpHeaders.ACCEPT, HttpHeaders.ACCEPT_LANGUAGE, HttpHeaders.CONTENT_TYPE,
+                    IdempotencyFilter.KEY_HEADER);
+    private static final List<String> RESPONSE_HEADERS =
+            List.of(HttpHeaders.CONTENT_TYPE, HttpHeaders.LOCATION, IdempotencyFilter.REPLAYED_HEADER);
 
     private static final Pattern CUSTOMER_LOGIN = Pattern.compile("/api/customers/[^/]+/login");
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
@@ -95,8 +99,9 @@ public class ApiProxyController {
         } catch (IOException e) {
             // The request went out but no answer came back, so it may have been carried out.
             log.warn("No answer from {}: {}", serviceUrl, e.toString());
-            Problems.write(response, HttpStatus.GATEWAY_TIMEOUT,
-                    "No answer was received, so this may or may not have been applied. Check before trying again.");
+            Problems.write(response, HttpStatus.GATEWAY_TIMEOUT, request.getHeader(IdempotencyFilter.KEY_HEADER) != null
+                    ? "No answer was received. It is safe to send this again with the same Idempotency-Key."
+                    : "No answer was received, so this may or may not have been applied. Check before trying again.");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             Problems.write(response, HttpStatus.SERVICE_UNAVAILABLE, "The server is shutting down.");

@@ -7,11 +7,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.bank.account.CustomerServiceClient;
 import com.bank.common.ResourceNotFoundException;
+import com.bank.common.idempotency.IdempotencyFilter;
 import com.bank.common.security.InternalTokens;
 import com.jayway.jsonpath.JsonPath;
 import java.io.IOException;
@@ -72,6 +74,9 @@ class AccountApiIntegrationTest {
 
     @Autowired
     private InternalTokens tokens;
+
+    @Autowired
+    private IdempotencyFilter idempotency;
 
     @MockitoBean
     private CustomerServiceClient customerService;
@@ -296,6 +301,116 @@ class AccountApiIntegrationTest {
     }
 
     @Test
+    void depositRepeatedWithTheSameKeyIsAppliedOnce() throws Exception {
+        long account = createAccount(newCustomerId());
+
+        String first = moveWithKey(account, "deposit", "10.00", "key-1")
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist(IdempotencyFilter.REPLAYED_HEADER))
+                .andReturn().getResponse().getContentAsString();
+        String repeat = moveWithKey(account, "deposit", "10.00", "key-1")
+                .andExpect(status().isOk())
+                .andExpect(header().string(IdempotencyFilter.REPLAYED_HEADER, "true"))
+                .andExpect(header().string(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(repeat).isEqualTo(first);
+        assertThat(balance(account)).isEqualByComparingTo("10.00");
+        assertThat(ledgerEntries(account)).isEqualTo(1);
+    }
+
+    /** The case keys are for: the answer was lost, so the client sends it again while it may still run. */
+    @Test
+    void simultaneousRepeatsWithTheSameKeyAreAppliedOnce() throws Exception {
+        long account = createAccount(newCustomerId());
+        Callable<Integer> deposit = () ->
+                moveWithKey(account, "deposit", "1.00", "same-key").andReturn().getResponse().getStatus();
+
+        List<Integer> statuses = runSimultaneously(Collections.nCopies(8, deposit));
+
+        assertThat(statuses).containsOnly(200);
+        assertThat(balance(account)).isEqualByComparingTo("1.00");
+        assertThat(ledgerEntries(account)).isEqualTo(1);
+    }
+
+    @Test
+    void keyReusedForADifferentRequestIsRefused() throws Exception {
+        long account = createAccount(newCustomerId());
+        moveWithKey(account, "deposit", "10.00", "key-2").andExpect(status().isOk());
+
+        moveWithKey(account, "deposit", "99.00", "key-2").andExpect(status().isUnprocessableContent());
+        moveWithKey(account, "withdraw", "10.00", "key-2").andExpect(status().isUnprocessableContent());
+
+        assertThat(balance(account)).isEqualByComparingTo("10.00");
+    }
+
+    /** A failure changed nothing, so it is not remembered: the same request can work later. */
+    @Test
+    void failedRequestCanBeRetriedWithTheSameKey() throws Exception {
+        long account = createAccount(newCustomerId());
+        moveWithKey(account, "withdraw", "5.00", "key-3").andExpect(status().isUnprocessableContent());
+
+        move(account, "deposit", "8.00").andExpect(status().isOk());
+        moveWithKey(account, "withdraw", "5.00", "key-3")
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist(IdempotencyFilter.REPLAYED_HEADER));
+
+        assertThat(balance(account)).isEqualByComparingTo("3.00");
+    }
+
+    @Test
+    void openingAnAccountRepeatedWithTheSameKeyOpensOne() throws Exception {
+        long customer = newCustomerId();
+        String location = postAccountWithKey(customer, "open-1").andExpect(status().isCreated())
+                .andReturn().getResponse().getHeader(HttpHeaders.LOCATION);
+
+        postAccountWithKey(customer, "open-1")
+                .andExpect(status().isCreated())
+                .andExpect(header().string(HttpHeaders.LOCATION, location))
+                .andExpect(header().string(IdempotencyFilter.REPLAYED_HEADER, "true"));
+
+        assertThat(accountsOf(customer)).isEqualTo(1);
+    }
+
+    /** Keys belong to the caller, so another person's request is never answered with someone else's. */
+    @Test
+    void theSameKeyFromAnotherCallerIsANewRequest() throws Exception {
+        long account = createAccount(newCustomerId());
+        moveWithKey(account, "deposit", "1.00", "shared").andExpect(status().isOk());
+
+        mockMvc.perform(as(tokens.forUser(1L, "STAFF", null), post("/api/accounts/" + account + "/deposit"))
+                        .header(IdempotencyFilter.KEY_HEADER, "shared")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\": 1.00}"))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist(IdempotencyFilter.REPLAYED_HEADER));
+
+        assertThat(balance(account)).isEqualByComparingTo("2.00");
+    }
+
+    @Test
+    void malformedKeyIsRefused() throws Exception {
+        long account = createAccount(newCustomerId());
+
+        moveWithKey(account, "deposit", "1.00", "has spaces").andExpect(status().isBadRequest());
+        moveWithKey(account, "deposit", "1.00", "x".repeat(101)).andExpect(status().isBadRequest());
+
+        assertThat(balance(account)).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void expiredKeysAreRemoved() throws Exception {
+        long account = createAccount(newCustomerId());
+        moveWithKey(account, "deposit", "1.00", "old-key").andExpect(status().isOk());
+        jdbc.update("update idempotency_keys set created_at = now() - interval '25 hours' where idem_key = 'old-key'");
+
+        idempotency.removeExpiredKeys();
+
+        assertThat(jdbc.queryForObject("select count(*) from idempotency_keys where idem_key = 'old-key'", Long.class))
+                .isZero();
+    }
+
+    @Test
     void healthIsPublicForContainerChecksButOtherEndpointsAreNot() throws Exception {
         mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
         mockMvc.perform(get("/actuator/env")).andExpect(status().isUnauthorized());
@@ -333,6 +448,20 @@ class AccountApiIntegrationTest {
         return mockMvc.perform(asStaff(post("/api/accounts/" + accountId + "/" + operation))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"amount\": " + amount + "}"));
+    }
+
+    private ResultActions moveWithKey(long accountId, String operation, String amount, String key) throws Exception {
+        return mockMvc.perform(asStaff(post("/api/accounts/" + accountId + "/" + operation))
+                .header(IdempotencyFilter.KEY_HEADER, key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": " + amount + "}"));
+    }
+
+    private ResultActions postAccountWithKey(long customerId, String key) throws Exception {
+        return mockMvc.perform(asStaff(post("/api/accounts"))
+                .header(IdempotencyFilter.KEY_HEADER, key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"customerId\": " + customerId + ", \"type\": \"CHECKING\"}"));
     }
 
     private Callable<Integer> deposit(long account) {

@@ -58,8 +58,24 @@ The monolith could not get into these states:
 - A delete that fails part-way leaves a customer who is retired, and perhaps without a login, until it is retried.
 - Setting a login while the same customer is being deleted can leave a login with no customer. It can
   sign in, but sees no data.
-- If the gateway gets no answer to a write, the caller is told it may or may not have been applied.
-  Nothing is retried automatically, and the API has no idempotency keys yet.
+- A write sent without an `Idempotency-Key` that gets no answer may or may not have been applied, and
+  sending it again could apply it twice. The web page always sends a key; other API clients should too.
+
+### Sending a write again safely
+
+Add an `Idempotency-Key` header, any value of up to 100 letters, digits or `_ . : -`, new for each
+change. A UUID is ideal. If a request with a key gets no answer, send exactly the same request with
+the same key: it is carried out at most once, and a repeat gets the first answer back, marked
+`Idempotent-Replayed: true`.
+
+- The service that owns the data stores the key and its answer in the same database transaction as
+  the change, so the two can't disagree. A repeat sent while the first is still running waits for it.
+- Only successful answers are kept. A failure changed nothing, so the same key can be used again, for
+  example after a 409, or once there is enough money.
+- The same key with a different request gets a 422. Keys belong to the person using them and are
+  forgotten after 24 hours; a repeat after that is carried out again.
+- The web page sends a key with every write, and sends it again by itself, up to twice, when no answer
+  comes back.
 
 ### Availability
 

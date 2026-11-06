@@ -44,3 +44,16 @@ groups:
           severity: warning
         annotations:
           summary: "{{ $value }} failed sign-ins in 5 minutes"
+      - alert: BackupFailed
+        expr: bank_backup_last_run_success == 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "The latest database backup or its test restore failed. See: docker compose logs backup"
+      - alert: BackupTooOld
+        expr: time() - bank_backup_last_success_timestamp_seconds > 30 * 3600
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The newest working database backup is {{ $value | humanizeDuration }} old"

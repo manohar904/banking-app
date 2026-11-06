@@ -69,6 +69,32 @@ services:
             || psql -v ON_ERROR_STOP=1 -c "create database $$db"
         done
 
+  # Backs up every database daily and test-restores each backup. See README.md, "Backups".
+  # Backups go to a folder on this computer, not a Docker volume, so `down -v` cannot remove them.
+  backup:
+    image: postgres:18-alpine
+    depends_on: *db-ready
+    entrypoint: ["sh", "/backup.sh"]
+    command: ["schedule"]
+    init: true
+    environment:
+      PGHOST: postgres
+      PGUSER: ${DB_USERNAME:-bank}
+      PGPASSWORD: ${DB_PASSWORD:-bank_dev_password}
+      BACKUP_TIME: ${BACKUP_TIME:-02:00}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      TZ: ${BACKUP_TIMEZONE:-UTC}
+    volumes:
+      - ./backup/backup.sh:/backup.sh:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9188"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    restart: unless-stopped
+    mem_limit: 256m
+
   # Single-node Kafka. The services do not wait for it: their events are kept until it is back.
   kafka:
     image: apache/kafka:4.3.2

@@ -11,9 +11,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
@@ -22,10 +23,15 @@ final class BankingSystem implements AutoCloseable {
 
     private static final Duration START_TIMEOUT = Duration.ofMinutes(3);
     private static final String TOKEN_SECRET = "an-end-to-end-test-secret-that-is-long-enough";
+    private static final String REDIS_PASSWORD = "an-end-to-end-redis-password";
 
     private final PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
     private final KafkaContainer kafka = new KafkaContainer("apache/kafka:4.3.2");
-    private final List<Process> processes = new ArrayList<>();
+    private final GenericContainer<?> redis = new GenericContainer<>("redis:8.8.4-alpine")
+            .withCommand("redis-server", "--requirepass", REDIS_PASSWORD)
+            .withExposedPorts(6379);
+    private final Map<String, Process> processes = new LinkedHashMap<>();
+    private Map<String, String> urls;
     private final HttpClient http = HttpClient.newHttpClient();
     final int gatewayPort;
     final int customerPort;
@@ -44,11 +50,12 @@ final class BankingSystem implements AutoCloseable {
     void start(String adminEmail, String adminPassword) throws Exception {
         postgres.start();
         kafka.start();
+        redis.start();
         for (String database : List.of("bank_customers", "bank_accounts", "bank_auth")) {
             postgres.execInContainer("psql", "-U", postgres.getUsername(), "-d", postgres.getDatabaseName(),
                     "-c", "create database " + database);
         }
-        Map<String, String> urls = Map.of(
+        urls = Map.of(
                 "CUSTOMER_SERVICE_URL", "http://127.0.0.1:" + customerPort,
                 "ACCOUNT_SERVICE_URL", "http://127.0.0.1:" + accountPort,
                 "AUTH_SERVICE_URL", "http://127.0.0.1:" + authPort);
@@ -57,12 +64,29 @@ final class BankingSystem implements AutoCloseable {
         launch("account-service", accountPort, urls, Map.of("DB_NAME", "bank_accounts"));
         launch("auth-service", authPort, urls, Map.of(
                 "DB_NAME", "bank_auth", "BANK_ADMIN_EMAIL", adminEmail, "BANK_ADMIN_PASSWORD", adminPassword));
-        launch("gateway", gatewayPort, urls, Map.of("MANAGEMENT_SERVER_PORT", String.valueOf(gatewayManagementPort)));
+        launchGateway();
 
         awaitUp("customer-service", customerPort, "/actuator/health");
         awaitUp("account-service", accountPort, "/actuator/health");
         awaitUp("auth-service", authPort, "/actuator/health");
         awaitUp("gateway", gatewayPort, "/index.html");
+    }
+
+    /** Stops the gateway process and starts a new one, as a redeploy or crash would. */
+    void restartGateway() throws Exception {
+        Process gateway = processes.remove("gateway");
+        gateway.destroy();
+        gateway.waitFor();
+        launchGateway();
+        awaitUp("gateway", gatewayPort, "/index.html");
+    }
+
+    private void launchGateway() throws IOException {
+        launch("gateway", gatewayPort, urls, Map.of(
+                "MANAGEMENT_SERVER_PORT", String.valueOf(gatewayManagementPort),
+                "REDIS_HOST", redis.getHost(),
+                "REDIS_PORT", String.valueOf(redis.getMappedPort(6379)),
+                "REDIS_PASSWORD", REDIS_PASSWORD));
     }
 
     private void launch(String service, int port, Map<String, String> urls, Map<String, String> extra)
@@ -85,7 +109,7 @@ final class BankingSystem implements AutoCloseable {
         File log = logFile(service).toFile();
         Files.createDirectories(log.toPath().getParent());
         builder.redirectErrorStream(true).redirectOutput(log);
-        processes.add(builder.start());
+        processes.put(service, builder.start());
     }
 
     private void awaitUp(String service, int port, String path) throws Exception {
@@ -120,7 +144,8 @@ final class BankingSystem implements AutoCloseable {
 
     @Override
     public void close() {
-        processes.forEach(Process::destroy);
+        processes.values().forEach(Process::destroy);
+        redis.stop();
         kafka.stop();
         postgres.stop();
     }

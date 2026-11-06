@@ -17,6 +17,8 @@ import java.net.http.HttpRequest.BodyPublisher;
 import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,18 +26,32 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** Runs the real gateway on a real port, with small stand-ins for the services behind it. */
+/**
+ * Runs the real gateway on a real port, with small stand-ins for the services behind it and a real
+ * Redis for the sessions. Requires Docker.
+ */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
                 "bank.kafka.enabled=false",
-                "management.server.port=0"
+                "management.server.port=0",
+                "spring.data.redis.password="
         })
+@Testcontainers
 class GatewayTest {
+
+    /** Same image as compose.yaml. */
+    @Container
+    @ServiceConnection(name = "redis")
+    static GenericContainer<?> redis = new GenericContainer<>("redis:8.8.4-alpine").withExposedPorts(6379);
 
     private static final StubService customers = new StubService("customer-service");
     private static final StubService accounts = new StubService("account-service");
@@ -213,6 +229,42 @@ class GatewayTest {
     }
 
     @Test
+    void sessionsAreKeptInRedisAndRemovedOnSignOut() throws Exception {
+        browser.signIn();
+        String session = browser.cookie("SESSION");
+        assertThat(session).isNotNull();
+        assertThat(sessionKeys()).anyMatch(key -> key.endsWith(sessionId(session)));
+
+        browser.write("POST", "/api/auth/logout", "");
+
+        assertThat(sessionKeys()).noneMatch(key -> key.endsWith(sessionId(session)));
+    }
+
+    /** For example a session saved by an older gateway whose classes have since changed. */
+    @Test
+    void sessionThatCannotBeReadCountsAsSignedOut() throws Exception {
+        browser.signIn();
+        String key = sessionKeys().stream().filter(k -> k.endsWith(sessionId(browser.cookie("SESSION"))))
+                .findFirst().orElseThrow();
+
+        redis.execInContainer("redis-cli", "hset", key, "sessionAttr:SPRING_SECURITY_CONTEXT", "not-java");
+
+        HttpResponse<String> response = browser.get("/api/customers");
+        assertThat(response.statusCode()).isEqualTo(401);
+        assertThat(customers.lastPath.get()).isNull();
+    }
+
+    private static List<String> sessionKeys() throws Exception {
+        String keys = redis.execInContainer("redis-cli", "--scan", "--pattern", "bank:sessions:sessions:*").getStdout();
+        return keys.lines().filter(line -> !line.isBlank()).toList();
+    }
+
+    /** The cookie holds the session id in Base64. */
+    private static String sessionId(String cookie) {
+        return new String(Base64.getDecoder().decode(cookie), StandardCharsets.UTF_8);
+    }
+
+    @Test
     void idempotencyKeyIsPassedOnAndAReplayIsMarked() throws Exception {
         browser.signIn();
 
@@ -301,8 +353,12 @@ class GatewayTest {
         }
 
         private String cookie() {
+            return cookie("XSRF-TOKEN");
+        }
+
+        String cookie(String name) {
             return cookies.getCookieStore().getCookies().stream()
-                    .filter(cookie -> cookie.getName().equals("XSRF-TOKEN"))
+                    .filter(cookie -> cookie.getName().equals(name))
                     .map(java.net.HttpCookie::getValue)
                     .findFirst().orElse(null);
         }

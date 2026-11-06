@@ -2,3 +2,7 @@
 bank:
   internal:
     token-secret: ${INTERNAL_TOKEN_SECRET:bank_dev_internal_token_secret_local_only}
+spring:
+  data:
+    redis:
+      password: ${REDIS_PASSWORD:bank_dev_redis_password}

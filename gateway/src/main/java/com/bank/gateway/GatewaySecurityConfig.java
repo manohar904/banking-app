@@ -54,7 +54,7 @@ public class GatewaySecurityConfig {
                 .logout(logout -> logout
                         .logoutUrl("/api/auth/logout")
                         .logoutSuccessHandler(new HttpStatusReturningLogoutSuccessHandler(HttpStatus.NO_CONTENT))
-                        .deleteCookies("JSESSIONID"))
+                        .deleteCookies("SESSION"))
                 .exceptionHandling(errors -> errors
                         .authenticationEntryPoint((request, response, exception) ->
                                 Problems.write(response, HttpStatus.UNAUTHORIZED, "Please sign in."))

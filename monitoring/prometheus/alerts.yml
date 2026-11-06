@@ -21,7 +21,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "{{ $labels.job }} reports itself unhealthy, usually because its database is unavailable"
+          summary: "{{ $labels.job }} reports itself unhealthy, usually because its database, or for the gateway Redis, is unavailable"
       - alert: HighErrorRate
         expr: |
           sum by (job) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))

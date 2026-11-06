@@ -213,6 +213,29 @@ class GatewayTest {
     }
 
     @Test
+    void idempotencyKeyIsPassedOnAndAReplayIsMarked() throws Exception {
+        browser.signIn();
+
+        HttpResponse<String> response = browser.send(browser.writeRequest("POST", "/api/accounts/1/deposit", "{}")
+                .header("Idempotency-Key", "abc-123"));
+
+        assertThat(accounts.lastIdempotencyKey.get()).isEqualTo("abc-123");
+        assertThat(response.headers().firstValue("Idempotent-Replayed")).contains("true");
+    }
+
+    @Test
+    void lostAnswerWithAKeySaysItIsSafeToSendAgain() throws Exception {
+        browser.signIn();
+        accounts.hangUp.set(true);
+
+        HttpResponse<String> response = browser.send(browser.writeRequest("POST", "/api/accounts/1/deposit", "{}")
+                .header("Idempotency-Key", "abc-124"));
+
+        assertThat(response.statusCode()).isEqualTo(504);
+        assertThat(response.body()).contains("safe to send this again with the same Idempotency-Key");
+    }
+
+    @Test
     void authServiceBeingDownIsNotReportedAsAWrongPassword() throws Exception {
         auth.stop();
         try {
@@ -250,9 +273,13 @@ class GatewayTest {
         }
 
         HttpResponse<String> write(String method, String path, String json) throws Exception {
+            return send(writeRequest(method, path, json));
+        }
+
+        HttpRequest.Builder writeRequest(String method, String path, String json) throws Exception {
             BodyPublisher body = json.isEmpty() ? BodyPublishers.noBody() : BodyPublishers.ofString(json);
-            return send(request(path).header("Content-Type", "application/json")
-                    .header("X-XSRF-TOKEN", csrfToken()).method(method, body));
+            return request(path).header("Content-Type", "application/json")
+                    .header("X-XSRF-TOKEN", csrfToken()).method(method, body);
         }
 
         HttpResponse<String> signIn() throws Exception {
@@ -288,6 +315,7 @@ class GatewayTest {
         final AtomicReference<String> lastCookie = new AtomicReference<>();
         final AtomicReference<String> lastAuthorization = new AtomicReference<>();
         final AtomicReference<String> lastBody = new AtomicReference<>();
+        final AtomicReference<String> lastIdempotencyKey = new AtomicReference<>();
         final AtomicReference<Boolean> hangUp = new AtomicReference<>(false);
         private volatile int status = 200;
         private volatile String body = "{}";
@@ -313,6 +341,7 @@ class GatewayTest {
             lastCookie.set(null);
             lastAuthorization.set(null);
             lastBody.set(null);
+            lastIdempotencyKey.set(null);
             hangUp.set(false);
             answer(200, "{}");
         }
@@ -354,11 +383,13 @@ class GatewayTest {
             lastCookie.set(exchange.getRequestHeaders().getFirst("Cookie"));
             lastAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             lastBody.set(requestBody);
+            lastIdempotencyKey.set(exchange.getRequestHeaders().getFirst("Idempotency-Key"));
             if (hangUp.get()) {
                 exchange.close();
                 return;
             }
             exchange.getResponseHeaders().set("Location", "/somewhere");
+            exchange.getResponseHeaders().set("Idempotent-Replayed", "true");
             exchange.getResponseHeaders().set("Set-Cookie", "leak=1");
             respond(exchange, status, body);
         }

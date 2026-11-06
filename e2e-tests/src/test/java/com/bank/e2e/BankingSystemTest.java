@@ -171,6 +171,41 @@ class BankingSystemTest {
         assertThat(response.body()).contains("\"balance\":100.10");
     }
 
+    /** What the front end does when an answer is lost: send the same request again with the same key. */
+    @Test
+    void depositSentTwiceWithTheSameKeyIsAppliedOnce() throws Exception {
+        long account = newAccount(newCustomer(uniqueEmail()));
+        String key = UUID.randomUUID().toString();
+
+        Browser.Response first = staff.postWithKey("/api/accounts/" + account + "/deposit", "{\"amount\": 25.00}", key);
+        Browser.Response repeat = staff.postWithKey("/api/accounts/" + account + "/deposit", "{\"amount\": 25.00}", key);
+
+        assertThat(first.status()).isEqualTo(200);
+        assertThat(first.replayed()).isFalse();
+        assertThat(repeat.status()).isEqualTo(200);
+        assertThat(repeat.replayed()).isTrue();
+        assertThat(repeat.body()).isEqualTo(first.body());
+        assertThat(staff.get("/api/accounts/" + account).<Number>read("$.balance").doubleValue()).isEqualTo(25.0);
+        assertThat(staff.get("/api/accounts/" + account + "/transactions").<Number>read("$.page.totalElements"))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void customerCreatedTwiceWithTheSameKeyExistsOnce() throws Exception {
+        String key = UUID.randomUUID().toString();
+        String json = customerJson(uniqueEmail());
+
+        Browser.Response first = staff.postWithKey("/api/customers", json, key);
+        Browser.Response repeat = staff.postWithKey("/api/customers", json, key);
+
+        // Without the key the repeat would be a 409, as the email is taken, and the caller could not
+        // tell whether their own first attempt had worked.
+        assertThat(first.status()).isEqualTo(201);
+        assertThat(repeat.status()).isEqualTo(201);
+        assertThat(repeat.replayed()).isTrue();
+        assertThat(repeat.id()).isEqualTo(first.id());
+    }
+
     @Test
     void customerSeesTheirOwnRecords() throws Exception {
         Holder ada = holder();

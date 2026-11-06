@@ -56,6 +56,12 @@ function csrfToken() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+/** randomUUID only exists on https and localhost, so other addresses build one from random bytes. */
+function newIdempotencyKey() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function api(path, options = {}) {
   const init = { method: options.method ?? "GET", headers: { Accept: "application/json" } };
   if (options.body !== undefined) {
@@ -68,12 +74,28 @@ async function api(path, options = {}) {
   if (init.method !== "GET") {
     init.headers["X-XSRF-TOKEN"] = csrfToken();
   }
+  // Sign-in and sign-out are handled by the gateway itself; every other write gets a key, so it
+  // can be sent again when no answer came back without being carried out twice.
+  const canRepeat = init.method !== "GET" && !path.startsWith("/api/auth/log");
+  if (canRepeat) {
+    init.headers["Idempotency-Key"] = newIdempotencyKey();
+  }
 
   let response;
-  try {
-    response = await fetch(path, init);
-  } catch {
-    throw new ApiError("Could not reach the server. Check that it is running.", 0);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      response = await fetch(path, init);
+    } catch {
+      response = null;
+    }
+    const noAnswer = response === null || response.status === 502 || response.status === 504;
+    if (!canRepeat || !noAnswer || attempt === 3) break;
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+  }
+  if (response === null) {
+    throw new ApiError(canRepeat
+      ? "Could not reach the server, so this may or may not have been applied. Check before trying again."
+      : "Could not reach the server. Check that it is running.", 0);
   }
 
   const text = await response.text();

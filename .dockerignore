@@ -9,3 +9,5 @@ Dockerfile
 compose.yaml
 scripts
 monitoring
+backups
+backup

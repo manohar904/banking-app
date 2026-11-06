@@ -37,3 +37,6 @@ build/
 ### Local tool output ###
 *.log
 .env
+
+### Database backups ###
+/backups/

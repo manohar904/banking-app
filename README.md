@@ -117,12 +117,38 @@ because they get copied to Kafka and Elasticsearch.
    ```
    It should arrive within about a minute. If not, `docker compose logs alertmanager` says why.
 
-The alerts are `ServiceDown`, `ServiceUnhealthy`, `KafkaDown`, `HighErrorRate`, `EventsNotReachingKafka`
+The alerts are `ServiceDown`, `ServiceUnhealthy`, `KafkaDown`, `HighErrorRate`, `EventsNotReachingKafka`,
+`BackupFailed`, `BackupTooOld`
 and `ManyFailedSignIns`. `KafkaDown` only checks that Kafka accepts connections, so a broker that accepts
 them but has stopped working shows up later, as `EventsNotReachingKafka`.
 
 You get one email per problem and service, a reminder every 4 hours while it lasts, and another when it
 has gone away. Going on holiday or doing maintenance? Silence alerts at http://localhost:9093.
+
+## Backups
+
+The `backup` container backs up every database once a day, into the `backups` folder next to this file
+(not a Docker volume, so `docker compose down -v` cannot remove them). Each backup is then restored into
+a scratch database to prove it works, and only backups that pass count. The newest 7 are kept.
+
+It backs up at `BACKUP_TIME` (02:00 UTC by default), or as soon after as the computer is on. If the
+newest good backup is more than a day old, it backs up straight away. Change the settings in `.env`;
+see `.env.example`. A folder on another disk (`BACKUP_DIR`) protects against losing this one.
+
+```
+docker compose exec backup sh /backup.sh list      # the backups, and whether each passed its test
+docker compose exec backup sh /backup.sh now       # take one now, for example before an upgrade
+sh scripts/restore-backup.sh 2026-11-06_020000     # put one back
+```
+
+Restoring stops the services, loads every database from the backup under a temporary name, and only
+swaps them in when all of them loaded. If it fails, nothing has changed. The databases it replaced are
+kept as `<name>_before_restore` until the next restore, so you can still copy something out of them.
+Restore all the databases together: they refer to each other's ids. Events sent to Kafka after the
+backup was taken are not undone.
+
+The alerts `BackupFailed` and `BackupTooOld` (no good backup for 30 hours) tell you when backups stop
+working.
 
 ## Before production
 

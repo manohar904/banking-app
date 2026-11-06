@@ -32,8 +32,8 @@ services:
   postgres:
     image: postgres:18-alpine
     environment:
-      # The monolith's database. It stays in place so that its data can be migrated.
-      POSTGRES_DB: ${DB_NAME:-banking}
+      # No database of its own: db-init creates one per service.
+      POSTGRES_DB: postgres
       POSTGRES_USER: ${DB_USERNAME:-bank}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-bank_dev_password}
     ports:

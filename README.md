@@ -24,8 +24,6 @@ Then open http://localhost:8080. To create the first staff login, set `BANK_ADMI
 To run a service from the IDE or Gradle instead, start the database with `docker compose up -d db-init`,
 then `.\gradlew.bat :customer-service:bootRun`, and likewise for the others.
 
-Moving a stack that was running the old single application? See `scripts/migrate-monolith-data.sh`.
-
 ## How a request travels
 
 The browser only ever talks to the gateway, which is the only service with a published port.

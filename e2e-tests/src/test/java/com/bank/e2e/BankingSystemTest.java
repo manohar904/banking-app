@@ -300,6 +300,20 @@ class BankingSystemTest {
     }
 
     @Test
+    void restartingTheGatewaySignsNobodyOut() throws Exception {
+        Holder ada = holder();
+        Browser session = signedIn(ada.email(), PASSWORD);
+        assertThat(session.get("/api/auth/me").status()).isEqualTo(200);
+
+        system.restartGateway();
+
+        assertThat(session.get("/api/auth/me").status()).isEqualTo(200);
+        assertThat(session.get("/api/accounts/" + ada.accountId()).status()).isEqualTo(200);
+        // Staff signed in before the restart too, and can still make changes.
+        assertThat(staff.post("/api/customers", customerJson(uniqueEmail())).status()).isEqualTo(201);
+    }
+
+    @Test
     void signOutEndsTheSession() throws Exception {
         Browser session = signedIn(holder().email(), PASSWORD);
         assertThat(session.get("/api/auth/me").status()).isEqualTo(200);

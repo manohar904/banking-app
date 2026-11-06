@@ -21,7 +21,8 @@ docker compose up -d --build
 Then open http://localhost:8080. To create the first staff login, set `BANK_ADMIN_EMAIL` and
 `BANK_ADMIN_PASSWORD` (12 characters or more) first.
 
-To run a service from the IDE or Gradle instead, start the database with `docker compose up -d db-init`,
+To run a service from the IDE or Gradle instead, start the database, Kafka and Redis with
+`docker compose up -d db-init kafka redis`,
 then `.\gradlew.bat :customer-service:bootRun`, and likewise for the others.
 
 ## How a request travels
@@ -81,8 +82,14 @@ the same key: it is carried out at most once, and a repeat gets the first answer
 
 A service being down now only affects what needs it. Accounts can still be read if `customer-service`
 is down, but opening one fails with a 503. If `auth-service` is down nobody can sign in, and customer
-updates and deletes fail, but existing sessions can still read. The gateway keeps sessions in memory,
-so restarting it signs everyone out, and it can't yet run as more than one instance.
+updates and deletes fail, but existing sessions can still read.
+
+The gateway keeps sessions in Redis, so restarting or redeploying it signs nobody out, and more than
+one copy could run behind a load balancer. Redis saves to disk, so restarting it doesn't sign anyone
+out either. While Redis is down, signing in and anything needing a session answers with a 503 (the
+start page still loads), and the gateway reports itself unhealthy, which raises `ServiceUnhealthy`.
+Sessions end after 30 minutes unused. If a gateway upgrade changes what a session holds, sessions it
+can't read count as signed out.
 
 ## Events and monitoring
 
@@ -168,7 +175,7 @@ working.
 
 This is set up for local development. Before real use:
 
-- Set your own `INTERNAL_TOKEN_SECRET`, `DB_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and
+- Set your own `INTERNAL_TOKEN_SECRET`, `DB_PASSWORD`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and
   `SESSION_COOKIE_SECURE=true`, and serve the gateway over HTTPS.
 - Turn on security in Elasticsearch, Kibana and Kafka. They have no passwords here, and are only safe
   because they are published to this computer alone. Kafka also runs as a single broker, so it has no

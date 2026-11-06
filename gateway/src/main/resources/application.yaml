@@ -10,6 +10,18 @@ spring:
         max.block.ms: 5000
         request.timeout.ms: 5000
         delivery.timeout.ms: 10000
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+      # Fail fast: a request waits on Redis while it loads the session.
+      connect-timeout: 2s
+      timeout: 2s
+  session:
+    data:
+      redis:
+        namespace: bank:sessions
   task:
     scheduling:
       pool:
@@ -32,6 +44,7 @@ server:
   port: 8080
   servlet:
     session:
+      # Also how long a session is kept in Redis after its last use.
       timeout: 30m
       cookie:
         same-site: lax

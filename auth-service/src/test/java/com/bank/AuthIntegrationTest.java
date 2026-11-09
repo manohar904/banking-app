@@ -342,6 +342,35 @@ class AuthIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void staffCanLookUpTheEmailsBehindAuditEntries() throws Exception {
+        long customer = newCustomerId();
+        String email = newLogin(customer);
+        Number userId = JsonPath.read(authenticate(email, PASSWORD).andReturn().getResponse().getContentAsString(), "$.userId");
+
+        mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), get("/api/auth/audit/actors"))
+                        .param("ids", userId + "," + Long.MAX_VALUE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$['" + userId + "']").value(email))
+                .andExpect(jsonPath("$['" + Long.MAX_VALUE + "']").doesNotExist());
+    }
+
+    @Test
+    void customerCannotLookUpEmails() throws Exception {
+        long customer = newCustomerId();
+
+        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", customer), get("/api/auth/audit/actors")).param("ids", "1"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void tooManyIdsAtOnceAreRefused() throws Exception {
+        String ids = String.join(",", java.util.Collections.nCopies(101, "1"));
+
+        mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), get("/api/auth/audit/actors")).param("ids", ids))
+                .andExpect(status().isBadRequest());
+    }
+
     private void useUpAttempts(String email) throws Exception {
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             authenticate(email, "not-the-password").andExpect(status().isUnauthorized());

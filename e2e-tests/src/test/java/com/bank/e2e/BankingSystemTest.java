@@ -234,6 +234,8 @@ class BankingSystemTest {
         assertThat(audit.<String>read("$.content[0].actorRole")).isEqualTo("STAFF");
         assertThat(audit.<Number>read("$.content[0].actorUserId").longValue()).isPositive();
         assertThat(signedIn(ada.email(), PASSWORD).get("/api/accounts/audit").status()).isEqualTo(403);
+        long actor = audit.<Number>read("$.content[0].actorUserId").longValue();
+        assertThat(staff.get("/api/auth/audit/actors?ids=" + actor).body()).contains("boss@example.com");
     }
 
     @Test

@@ -190,6 +190,13 @@ async function openAuditLog(source = "accounts", page = 0) {
   renderDetail();
 }
 
+function closeAuditLog() {
+  selectionVersion++;
+  state.audit = null;
+  state.detailError = null;
+  renderDetail();
+}
+
 async function selectCustomer(id) {
   state.audit = null;
   const version = ++selectionVersion;
@@ -368,8 +375,11 @@ function auditPanel() {
     el("td", { class: "wrap" }, auditDetails(entry.details))));
 
   return el("div", { class: "panel" },
-    el("h2", {}, "Audit log"),
-    el("p", { class: "muted" }, "Who changed what, newest first."),
+    el("div", { class: "panel-head" },
+      el("div", {},
+        el("h2", {}, "Audit log"),
+        el("p", { class: "muted" }, "Who changed what, newest first.")),
+      el("button", { type: "button", onclick: closeAuditLog }, "Close")),
     el("label", { class: "audit-source" }, "Show", select),
     rows.length
       ? el("div", { class: "table-wrap" }, el("table", {},

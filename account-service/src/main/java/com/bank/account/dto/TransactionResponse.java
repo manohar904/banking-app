@@ -11,6 +11,7 @@ public record TransactionResponse(
         TransactionType type,
         BigDecimal amount,
         BigDecimal balanceAfter,
+        String counterpartyAccountNumber,
         Instant createdAt) {
 
     public static TransactionResponse from(AccountTransaction transaction) {
@@ -20,6 +21,7 @@ public record TransactionResponse(
                 transaction.getType(),
                 transaction.getAmount(),
                 transaction.getBalanceAfter(),
+                transaction.getCounterpartyAccountNumber(),
                 transaction.getCreatedAt());
     }
 }

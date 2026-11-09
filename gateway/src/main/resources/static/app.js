@@ -280,6 +280,12 @@ function customerPanel() {
       : el("p", { class: "empty" }, "This customer has no accounts yet."));
 }
 
+function entryLabel(entry) {
+  if (entry.type === "TRANSFER_OUT") return `Transfer to ${entry.counterpartyAccountNumber}`;
+  if (entry.type === "TRANSFER_IN") return `Transfer from ${entry.counterpartyAccountNumber}`;
+  return titleCase(entry.type);
+}
+
 function accountPanel() {
   const { account, transactions } = state;
   const amount = el("input", {
@@ -288,6 +294,11 @@ function accountPanel() {
   const amountError = el("span", { class: "field-error", role: "alert" });
   const deposit = el("button", { type: "submit", class: "primary" }, "Deposit");
   const withdraw = el("button", { type: "button" }, "Withdraw");
+  const toAccount = el("input", {
+    name: "toAccountNumber", inputmode: "numeric", autocomplete: "off", maxlength: "12", placeholder: "12 digits",
+    "aria-label": "To account number",
+  });
+  const transfer = el("button", { type: "button" }, "Transfer");
 
   const submit = async (operation) => {
     const value = amount.value.trim();
@@ -295,30 +306,41 @@ function accountPanel() {
       amountError.textContent = "Enter an amount above zero, with at most 2 decimals.";
       return;
     }
+    const toAccountNumber = toAccount.value.trim();
+    if (operation === "transfer" && !/^\d{12}$/.test(toAccountNumber)) {
+      amountError.textContent = "Enter the 12-digit number of the account to transfer to.";
+      return;
+    }
     amountError.textContent = "";
     deposit.disabled = true;
     withdraw.disabled = true;
+    transfer.disabled = true;
     try {
       // Sent as a string, because a JSON number could lose cents as a JavaScript double.
-      await api(`/api/accounts/${account.id}/${operation}`, { method: "POST", body: { amount: value } });
-      toast(operation === "deposit" ? "Deposit completed." : "Withdrawal completed.");
+      await api(`/api/accounts/${account.id}/${operation}`, {
+        method: "POST",
+        body: operation === "transfer" ? { toAccountNumber, amount: value } : { amount: value },
+      });
+      toast({ deposit: "Deposit completed.", withdraw: "Withdrawal completed.", transfer: "Transfer completed." }[operation]);
       await selectAccount(account.id);
       return;
     } catch (error) {
-      amountError.textContent = error.fieldErrors.amount ?? error.message;
+      amountError.textContent = error.fieldErrors.amount ?? error.fieldErrors.toAccountNumber ?? error.message;
     }
     deposit.disabled = false;
     withdraw.disabled = false;
+    transfer.disabled = false;
   };
   withdraw.onclick = () => submit("withdraw");
+  transfer.onclick = () => submit("transfer");
 
   const rows = transactions.content.map((entry) => {
-    const isDeposit = entry.type === "DEPOSIT";
+    const isCredit = entry.type === "DEPOSIT" || entry.type === "TRANSFER_IN";
     return el("tr", {},
       el("td", {}, dateFormat.format(new Date(entry.createdAt))),
-      el("td", {}, titleCase(entry.type)),
-      el("td", { class: `right number${isDeposit ? " credit" : ""}` },
-        `${isDeposit ? "+" : "−"}${moneyFormat.format(entry.amount)}`),
+      el("td", {}, entryLabel(entry)),
+      el("td", { class: `right number${isCredit ? " credit" : ""}` },
+        `${isCredit ? "+" : "−"}${moneyFormat.format(entry.amount)}`),
       el("td", { class: "right number" }, moneyFormat.format(entry.balanceAfter)));
   });
 
@@ -333,7 +355,7 @@ function accountPanel() {
       class: "money-form",
       novalidate: "",
       onsubmit: (event) => { event.preventDefault(); submit("deposit"); },
-    }, el("label", {}, "Amount", amount), deposit, withdraw) : null,
+    }, el("label", {}, "Amount", amount), deposit, withdraw, el("label", {}, "To account", toAccount), transfer) : null,
     isStaff() ? amountError : null,
     el("h3", { class: "spaced-top" }, "Transactions"),
     rows.length

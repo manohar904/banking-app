@@ -78,6 +78,15 @@ the same key: it is carried out at most once, and a repeat gets the first answer
 - The web page sends a key with every write, and sends it again by itself, up to twice, when no answer
   comes back.
 
+### Transfers
+
+Staff can move money between any two accounts with `POST /api/accounts/{id}/transfer`, giving the
+destination's 12-digit account number. Both balances and both ledger entries change in one database
+transaction, so money is never taken without arriving. Each side gets its own ledger entry
+(`TRANSFER_OUT`, `TRANSFER_IN`) and event (`TRANSFER_SENT`, `TRANSFER_RECEIVED`), linked by a transfer id.
+Send an `Idempotency-Key` so that a repeat can't move the money twice. If another request changed one
+of the accounts at the same moment, the answer is a 409 and nothing was applied.
+
 ### Availability
 
 A service being down now only affects what needs it. Accounts can still be read if `customer-service`

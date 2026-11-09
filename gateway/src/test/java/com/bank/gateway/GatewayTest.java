@@ -121,6 +121,64 @@ class GatewayTest {
     }
 
     @Test
+    void forgotPasswordWorksWithoutSigningInAndGoesToTheAuthServiceAsThisService() throws Exception {
+        auth.answer(202, "");
+
+        HttpResponse<String> response = browser.write("POST", "/api/auth/password-reset", "{\"email\": \"ada@example.com\"}");
+
+        assertThat(response.statusCode()).isEqualTo(202);
+        assertThat(auth.lastPath.get()).isEqualTo("/internal/password-reset-requests");
+        assertThat(auth.lastBody.get()).contains("ada@example.com");
+        Jwt token = tokens.decoder().decode(auth.lastAuthorization.get().substring("Bearer ".length()));
+        assertThat(token.getClaimAsString("role")).isEqualTo("SERVICE");
+    }
+
+    @Test
+    void aRefusedResetLinkKeepsItsMessage() throws Exception {
+        auth.answer(400, "{\"detail\":\"This reset link is invalid\"}");
+
+        HttpResponse<String> response = browser.write("POST", "/api/auth/password-reset/confirm", "{\"token\": \"x\"}");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.body()).contains("This reset link is invalid");
+        assertThat(auth.lastPath.get()).isEqualTo("/internal/password-resets");
+    }
+
+    @Test
+    void forgotPasswordStillNeedsACsrfToken() throws Exception {
+        HttpResponse<String> refused = browser.send(browser.request("/api/auth/password-reset")
+                .header("Content-Type", "application/json").POST(BodyPublishers.ofString("{}")));
+
+        assertThat(refused.statusCode()).isEqualTo(403);
+        assertThat(auth.lastPath.get()).isNull();
+    }
+
+    @Test
+    void anOversizedForgotPasswordRequestIsRefused() throws Exception {
+        HttpResponse<String> response = browser.write("POST", "/api/auth/password-reset", "x".repeat(5000));
+
+        assertThat(response.statusCode()).isEqualTo(413);
+        assertThat(auth.lastPath.get()).isNull();
+    }
+
+    @Test
+    void forgotPasswordSaysSoWhenTheAuthServiceIsDown() throws Exception {
+        auth.stop();
+        try {
+            assertThat(browser.write("POST", "/api/auth/password-reset", "{}").statusCode()).isEqualTo(503);
+        } finally {
+            auth.start();
+        }
+    }
+
+    @Test
+    void onlyTheForgotPasswordPathsAreOpen() throws Exception {
+        assertThat(browser.write("POST", "/api/auth/password", "{}").statusCode()).isEqualTo(401);
+        assertThat(browser.write("POST", "/api/auth/password-reset/other", "{}").statusCode()).isEqualTo(401);
+        assertThat(browser.get("/api/auth/password-reset").statusCode()).isEqualTo(401);
+    }
+
+    @Test
     void tooManySignInAttemptsAreReportedAsSuch() throws Exception {
         auth.signInsLimited.set(true);
 

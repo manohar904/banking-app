@@ -203,6 +203,13 @@ services:
       # Only used to create the first staff login, when none exists yet.
       BANK_ADMIN_EMAIL: ${BANK_ADMIN_EMAIL:-}
       BANK_ADMIN_PASSWORD: ${BANK_ADMIN_PASSWORD:-}
+      # Password reset emails use the same account as alert emails. Without one, none are sent.
+      MAIL_HOST: ${PASSWORD_RESET_SMTP_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${PASSWORD_RESET_SMTP_PORT:-587}
+      MAIL_USERNAME: ${ALERT_SMTP_USERNAME:-}
+      MAIL_PASSWORD: ${ALERT_SMTP_PASSWORD:-}
+      MAIL_FROM: ${ALERT_EMAIL_FROM:-${ALERT_SMTP_USERNAME:-}}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:${APP_PORT:-8080}}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8083/actuator/health"]
       interval: 10s

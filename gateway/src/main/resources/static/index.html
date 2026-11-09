@@ -30,6 +30,7 @@
         <input name="password" type="password" autocomplete="current-password" required>
       </label>
       <div class="actions">
+        <button id="forgot-password" type="button">Forgot password?</button>
         <button class="primary" type="submit">Sign in</button>
       </div>
     </form>
@@ -121,6 +122,37 @@
         <input name="currentPassword" type="password" autocomplete="current-password" required>
         <span class="field-error" data-error-for="currentPassword"></span>
       </label>
+      <label>New password (at least 12 characters)
+        <input name="newPassword" type="password" maxlength="72" autocomplete="new-password" required>
+        <span class="field-error" data-error-for="newPassword"></span>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="forgot-dialog">
+    <form id="forgot-form" method="dialog" novalidate>
+      <h2>Forgot password</h2>
+      <p class="muted">Enter your email and we'll send you a link to choose a new password.</p>
+      <p class="form-error" data-form-error hidden></p>
+      <label>Email
+        <input name="email" type="email" maxlength="254" autocomplete="username" required>
+        <span class="field-error" data-error-for="email"></span>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Send link</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="reset-dialog">
+    <form id="reset-form" method="dialog" novalidate>
+      <h2>Choose a new password</h2>
+      <p class="form-error" data-form-error hidden></p>
       <label>New password (at least 12 characters)
         <input name="newPassword" type="password" maxlength="72" autocomplete="new-password" required>
         <span class="field-error" data-error-for="newPassword"></span>

@@ -3,6 +3,7 @@ package com.bank.gateway;
 import com.bank.common.security.Problems;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.LockedException;
@@ -33,6 +34,9 @@ public class GatewaySecurityConfig {
                         .permitAll()
                         // Only served on the private management port. On the main port these are a 404.
                         .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
+                        // For people who cannot sign in. Every other API call needs a session.
+                        .requestMatchers(HttpMethod.POST, "/api/auth/password-reset", "/api/auth/password-reset/confirm")
+                        .permitAll()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().denyAll())
                 // The front end reads the token from a cookie and sends it back in a header.

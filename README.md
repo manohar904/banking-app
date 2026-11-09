@@ -102,6 +102,17 @@ not someone with full control of the database. When one service calls another, s
 removing a login when a customer is deleted, the second service records the actor as `SERVICE`; the first
 service's entry says which person started it. Reading records and signing in aren't audited.
 
+### Forgot password
+
+**Forgot password?** on the sign-in page emails a link that works once, for 30 minutes. It uses the
+same email account as alerts (`.env`); without one, nothing is sent and `auth-service` logs a warning.
+Set `APP_BASE_URL` to the address people reach the app at, because links are built from it.
+
+The answer is the same whether or not the email has an account, the email is sent in the background so
+timing doesn't reveal it either, and only a hash of the link is stored. Each address can ask 3 times in
+15 minutes. Changing a password or email cancels an outstanding link. Sessions already signed in are not
+ended by a reset; they expire after 30 minutes unused.
+
 ### Availability
 
 A service being down now only affects what needs it. Accounts can still be read if `customer-service`

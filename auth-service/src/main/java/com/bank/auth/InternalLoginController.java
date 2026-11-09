@@ -1,5 +1,6 @@
 package com.bank.auth;
 
+import com.bank.auth.dto.ConfirmPasswordResetRequest;
 import com.bank.auth.dto.CredentialsRequest;
 import com.bank.auth.dto.EmailRequest;
 import com.bank.auth.dto.VerifiedUserResponse;
@@ -29,6 +30,7 @@ public class InternalLoginController {
     private final AuthenticationManager credentialChecker;
     private final LoginService loginService;
     private final SignInLimiter signInLimiter;
+    private final PasswordResetService passwordResets;
     private final MeterRegistry metrics;
 
     /** Checks a password for the gateway, which then holds the session. */
@@ -49,6 +51,19 @@ public class InternalLoginController {
             metrics.counter("bank.signins", "outcome", "failure").increment();
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Incorrect email or password.");
         }
+    }
+
+    /** The same answer whether or not the email has an account. */
+    @PostMapping("/password-reset-requests")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public void requestPasswordReset(@Valid @RequestBody EmailRequest request) {
+        passwordResets.requestReset(request.email());
+    }
+
+    @PostMapping("/password-resets")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void confirmPasswordReset(@Valid @RequestBody ConfirmPasswordResetRequest request) {
+        passwordResets.confirmReset(request.token(), request.newPassword());
     }
 
     @PutMapping("/logins/{customerId}/email")

@@ -723,7 +723,53 @@ $("confirm-form").onsubmit = (event) => {
   submitDialog($("confirm-dialog"), event.target, () => confirmAction());
 };
 
-start().catch((error) => {
+$("forgot-password").onclick = () => {
+  const form = $("forgot-form");
+  form.reset();
+  form.elements.email.value = $("login-form").elements.email.value.trim();
+  showFormError(form, null);
+  clearFieldErrors(form);
+  $("forgot-dialog").showModal();
+};
+
+$("forgot-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  submitDialog($("forgot-dialog"), form, async () => {
+    await api("/api/auth/password-reset", {
+      method: "POST",
+      expectSignedOut: true,
+      body: { email: form.elements.email.value.trim() },
+    });
+    toast("If that email has an account, a reset link is on its way. It works for 30 minutes.");
+  });
+};
+
+// The link's token is in the fragment. It is removed from the address bar straight away, so it
+// doesn't stay in the browser's history.
+const resetLink = window.location.hash.match(/^#reset=([\w-]+)$/);
+if (resetLink) history.replaceState(null, "", window.location.pathname);
+
+$("reset-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  submitDialog($("reset-dialog"), form, async () => {
+    await api("/api/auth/password-reset/confirm", {
+      method: "POST",
+      expectSignedOut: true,
+      body: { token: resetLink[1], newPassword: form.elements.newPassword.value },
+    });
+    form.reset();
+    toast("Password changed. You can sign in with it now.");
+  });
+};
+
+/** After start(), because showing the sign-in page closes any open dialog. */
+function openResetDialogFromLink() {
+  if (resetLink) $("reset-dialog").showModal();
+}
+
+start().then(openResetDialogFromLink).catch((error) => {
   state.detailError = error.message;
   renderDetail();
 });

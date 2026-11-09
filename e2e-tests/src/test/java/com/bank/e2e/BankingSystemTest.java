@@ -239,6 +239,17 @@ class BankingSystemTest {
     }
 
     @Test
+    void forgotPasswordIsOpenToAnyoneAndABadLinkIsRefused() throws Exception {
+        assertThat(browser().post("/api/auth/password-reset", "{\"email\": \"nobody@example.com\"}").status()).isEqualTo(202);
+
+        Browser.Response refused = browser().post("/api/auth/password-reset/confirm",
+                "{\"token\": \"made-up\", \"newPassword\": \"a-brand-new-password\"}");
+
+        assertThat(refused.status()).isEqualTo(400);
+        assertThat(refused.body()).contains("invalid or has expired");
+    }
+
+    @Test
     void customerSeesTheirOwnRecords() throws Exception {
         Holder ada = holder();
         Browser session = signedIn(ada.email(), PASSWORD);

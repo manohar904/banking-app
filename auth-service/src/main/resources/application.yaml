@@ -1,6 +1,18 @@
 spring:
   application:
     name: auth-service
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      "[mail.smtp.auth]": true
+      "[mail.smtp.starttls.enable]": true
+      "[mail.smtp.starttls.required]": true
+      "[mail.smtp.connectiontimeout]": 5000
+      "[mail.smtp.timeout]": 5000
+      "[mail.smtp.writetimeout]": 5000
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
     producer:
@@ -29,6 +41,10 @@ server:
   port: 8083
 
 management:
+  health:
+    mail:
+      # A mail outage must not mark the service unhealthy: signing in does not need email.
+      enabled: false
   endpoints:
     web:
       exposure:
@@ -39,6 +55,10 @@ management:
         http.server.requests: true
 
 bank:
+  password-reset:
+    # Empty turns reset emails off. Links are built from base-url, never from the request.
+    from: ${MAIL_FROM:}
+    base-url: ${APP_BASE_URL:http://localhost:8080}
   audit:
     path: /api/auth/audit
   internal:

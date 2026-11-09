@@ -19,6 +19,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -117,6 +118,15 @@ class GatewayTest {
         browser.signIn();
         assertThat(browser.get("/internal/customers/1").statusCode()).isEqualTo(403);
         assertThat(customers.lastPath.get()).isNull();
+    }
+
+    @Test
+    void eachSignInAttemptChecksThePasswordOnce() throws Exception {
+        browser.signIn("wrong-password");
+        assertThat(auth.passwordChecks.get()).isEqualTo(1);
+
+        browser.signIn();
+        assertThat(auth.passwordChecks.get()).isEqualTo(2);
     }
 
     @Test
@@ -389,6 +399,7 @@ class GatewayTest {
         final AtomicReference<String> lastBody = new AtomicReference<>();
         final AtomicReference<String> lastIdempotencyKey = new AtomicReference<>();
         final AtomicReference<String> lastTraceparent = new AtomicReference<>();
+        final AtomicInteger passwordChecks = new AtomicInteger();
         final AtomicReference<Boolean> hangUp = new AtomicReference<>(false);
         private volatile int status = 200;
         private volatile String body = "{}";
@@ -416,6 +427,7 @@ class GatewayTest {
             lastBody.set(null);
             lastIdempotencyKey.set(null);
             lastTraceparent.set(null);
+            passwordChecks.set(0);
             hangUp.set(false);
             answer(200, "{}");
         }
@@ -448,6 +460,7 @@ class GatewayTest {
             // No pooled connections, so that stopping a stub looks like a service that is really down.
             exchange.getResponseHeaders().set("Connection", "close");
             if (exchange.getRequestURI().getPath().equals("/internal/authentications")) {
+                passwordChecks.incrementAndGet();
                 boolean right = requestBody.contains("right-password");
                 respond(exchange, right ? 200 : 401, right
                         ? "{\"userId\":7,\"email\":\"ada@example.com\",\"role\":\"CUSTOMER\",\"customerId\":42}" : "{}");

@@ -49,6 +49,7 @@ class AuthIntegrationTest {
     static final String STAFF_PASSWORD = "first-staff-password";
     private static final String STAFF_EMAIL = "boss@example.com";
     private static final String PASSWORD = "customer-password";
+    private static final int MAX_ATTEMPTS = 5;
 
     /** Same image as compose.yaml. */
     @Container
@@ -96,6 +97,95 @@ class AuthIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
 
         assertThat(unknownEmail).isEqualTo(wrongPassword);
+    }
+
+    @Test
+    void afterFiveAttemptsEvenTheRightPasswordIsRefused() throws Exception {
+        String email = newLogin(newCustomerId());
+
+        useUpAttempts(email);
+
+        authenticate(email, PASSWORD).andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void theLimitCannotBeAvoidedByChangingEmailCase() throws Exception {
+        String email = newLogin(newCustomerId());
+
+        useUpAttempts(email.toUpperCase());
+
+        authenticate("  " + email + " ", PASSWORD).andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void anEmailWithoutAnAccountIsLimitedTheSameWay() throws Exception {
+        String known = newLogin(newCustomerId());
+        String unknown = uniqueEmail();
+        useUpAttempts(known);
+        useUpAttempts(unknown);
+
+        String knownAnswer = authenticate(known, "not-the-password")
+                .andExpect(status().isTooManyRequests())
+                .andReturn().getResponse().getContentAsString();
+        String unknownAnswer = authenticate(unknown, "not-the-password")
+                .andExpect(status().isTooManyRequests())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(unknownAnswer).isEqualTo(knownAnswer);
+    }
+
+    @Test
+    void aSuccessfulSignInStartsTheCountAgain() throws Exception {
+        String email = newLogin(newCustomerId());
+        for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
+            authenticate(email, "not-the-password").andExpect(status().isUnauthorized());
+        }
+
+        authenticate(email, PASSWORD).andExpect(status().isOk());
+
+        useUpAttempts(email);
+    }
+
+    @Test
+    void signingInWorksAgainOnceTheWindowHasPassed() throws Exception {
+        String email = newLogin(newCustomerId());
+        useUpAttempts(email);
+        authenticate(email, PASSWORD).andExpect(status().isTooManyRequests());
+
+        jdbc.update("update sign_in_attempts set window_started_at = window_started_at - interval '16 minutes'");
+
+        authenticate(email, PASSWORD).andExpect(status().isOk());
+    }
+
+    @Test
+    void staffSettingANewPasswordLiftsTheLimit() throws Exception {
+        long customer = newCustomerId();
+        String email = newLogin(customer);
+        useUpAttempts(email);
+
+        setLogin(customer, "a-brand-new-password").andExpect(status().isNoContent());
+
+        authenticate(email, "a-brand-new-password").andExpect(status().isOk());
+    }
+
+    @Test
+    void oneEmailReachingTheLimitDoesNotAffectAnother() throws Exception {
+        String limited = newLogin(newCustomerId());
+        String other = newLogin(newCustomerId());
+
+        useUpAttempts(limited);
+
+        authenticate(other, PASSWORD).andExpect(status().isOk());
+    }
+
+    @Test
+    void emailsAreNotStoredWithTheAttempts() throws Exception {
+        String email = uniqueEmail();
+        authenticate(email, "not-the-password");
+
+        List<String> stored = jdbc.queryForList("select email_hash from sign_in_attempts", String.class);
+
+        assertThat(stored).isNotEmpty().noneMatch(hash -> hash.contains("@")).allMatch(hash -> hash.length() == 64);
     }
 
     @Test
@@ -225,6 +315,12 @@ class AuthIntegrationTest {
     @Test
     void serviceTokenIsNotAPerson() throws Exception {
         mockMvc.perform(as(tokens.forThisService(), get("/api/auth/me"))).andExpect(status().isForbidden());
+    }
+
+    private void useUpAttempts(String email) throws Exception {
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            authenticate(email, "not-the-password").andExpect(status().isUnauthorized());
+        }
     }
 
     /** Creates a login for a customer the stub says exists, and returns the email. */

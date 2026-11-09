@@ -121,6 +121,18 @@ class GatewayTest {
     }
 
     @Test
+    void tooManySignInAttemptsAreReportedAsSuch() throws Exception {
+        auth.signInsLimited.set(true);
+
+        HttpResponse<String> response = browser.signIn();
+
+        assertThat(response.statusCode()).isEqualTo(429);
+        assertThat(response.body()).contains("Too many sign-in attempts");
+        assertThat(auth.passwordChecks.get()).isEqualTo(1);
+        assertThat(browser.get("/api/customers").statusCode()).isEqualTo(401);
+    }
+
+    @Test
     void eachSignInAttemptChecksThePasswordOnce() throws Exception {
         browser.signIn("wrong-password");
         assertThat(auth.passwordChecks.get()).isEqualTo(1);
@@ -400,6 +412,7 @@ class GatewayTest {
         final AtomicReference<String> lastIdempotencyKey = new AtomicReference<>();
         final AtomicReference<String> lastTraceparent = new AtomicReference<>();
         final AtomicInteger passwordChecks = new AtomicInteger();
+        final AtomicReference<Boolean> signInsLimited = new AtomicReference<>(false);
         final AtomicReference<Boolean> hangUp = new AtomicReference<>(false);
         private volatile int status = 200;
         private volatile String body = "{}";
@@ -428,6 +441,7 @@ class GatewayTest {
             lastIdempotencyKey.set(null);
             lastTraceparent.set(null);
             passwordChecks.set(0);
+            signInsLimited.set(false);
             hangUp.set(false);
             answer(200, "{}");
         }
@@ -461,6 +475,10 @@ class GatewayTest {
             exchange.getResponseHeaders().set("Connection", "close");
             if (exchange.getRequestURI().getPath().equals("/internal/authentications")) {
                 passwordChecks.incrementAndGet();
+                if (signInsLimited.get()) {
+                    respond(exchange, 429, "{}");
+                    return;
+                }
                 boolean right = requestBody.contains("right-password");
                 respond(exchange, right ? 200 : 401, right
                         ? "{\"userId\":7,\"email\":\"ada@example.com\",\"role\":\"CUSTOMER\",\"customerId\":42}" : "{}");

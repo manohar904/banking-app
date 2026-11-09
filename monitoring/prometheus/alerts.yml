@@ -39,7 +39,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }} has {{ $value }} events waiting. Is Kafka down?"
       - alert: ManyFailedSignIns
-        expr: sum(increase(bank_signins_total{outcome="failure"}[5m])) > 20
+        expr: sum(increase(bank_signins_total{outcome=~"failure|limited"}[5m])) > 20
         labels:
           severity: warning
         annotations:

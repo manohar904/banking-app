@@ -497,6 +497,19 @@ class BankingSystemTest {
     }
 
     @Test
+    void repeatedWrongPasswordsStopFurtherSignInAttempts() throws Exception {
+        Holder ada = holder();
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            assertThat(browser().signIn(ada.email(), "not-the-password").status()).isEqualTo(401);
+        }
+
+        Browser.Response refused = browser().signIn(ada.email(), PASSWORD);
+
+        assertThat(refused.status()).isEqualTo(429);
+        assertThat(refused.body()).contains("Too many sign-in attempts");
+    }
+
+    @Test
     void failedAndSuccessfulSignInsAreCounted() throws Exception {
         browser().signIn(STAFF_EMAIL, "not-the-password");
 

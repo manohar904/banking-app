@@ -1,5 +1,6 @@
 package com.bank.common.security;
 
+import io.micrometer.observation.ObservationRegistry;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,8 @@ public class InternalClients {
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
 
     private final InternalTokens tokens;
+    // Times each call and passes the trace on, so a request can be followed from service to service.
+    private final ObservationRegistry observationRegistry;
 
     public RestClient to(String baseUrl) {
         HttpClient httpClient = HttpClient.newBuilder()
@@ -30,6 +33,7 @@ public class InternalClients {
         return RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(requestFactory)
+                .observationRegistry(observationRegistry)
                 .requestInterceptor((request, body, execution) -> {
                     request.getHeaders().setBearerAuth(tokens.forThisService());
                     return execution.execute(request, body);

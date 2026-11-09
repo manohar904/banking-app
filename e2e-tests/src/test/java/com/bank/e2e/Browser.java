@@ -70,6 +70,10 @@ final class Browser {
                 .POST(BodyPublishers.noBody()));
     }
 
+    Response postWithHeader(String path, String json, String name, String value) throws Exception {
+        return send(writeRequest("POST", path, json).header(name, value));
+    }
+
     Response postWithKey(String path, String json, String idempotencyKey) throws Exception {
         return send(writeRequest("POST", path, json).header("Idempotency-Key", idempotencyKey));
     }

@@ -104,10 +104,21 @@ docker compose --profile monitoring up -d --build
 | Prometheus | http://localhost:9090 | none | Raw metrics and **Alerts** |
 | Alertmanager | http://localhost:9093 | none | Which alerts are being sent, and silencing them |
 | Elasticsearch | http://localhost:9200 | none | Stores what Kibana searches |
+| Tempo | through Grafana | | Stores traces: one request followed through every service it touched |
 
 The monitoring tools add about 4 GB of memory, and the logs take some minutes to appear after the first
 start. Without the profile, the bank and Kafka run alone. To use your own Grafana password, set
 `GRAFANA_ADMIN_PASSWORD` before its first start.
+
+**Traces** show where a request's time went. In Grafana, open **Explore**, choose **Traces**, and search,
+for example for slow requests (`{duration > 500ms}`) or failed ones (`{status = error}`). A trace shows
+the gateway, each service it called and how long each took. **Logs for this span** opens that request's
+log lines; in Kibana, search for `traceId:"<id>"`. Every request is traced and kept for 3 days; set
+`TRACING_SAMPLING_PROBABILITY` (for example `0.1`) to trace fewer. Health checks, metric scrapes and
+background jobs are not traced. Without the monitoring profile, traces are dropped.
+
+An event sent to Kafka is not yet linked to the request that caused it: the outbox sends it later, in
+the background.
 
 **Kafka topics**
 

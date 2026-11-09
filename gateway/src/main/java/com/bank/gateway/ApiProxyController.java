@@ -3,6 +3,10 @@ package com.bank.gateway;
 import com.bank.common.idempotency.IdempotencyFilter;
 import com.bank.common.security.InternalTokens;
 import com.bank.common.security.Problems;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.TraceContext;
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.propagation.Propagator;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -48,15 +52,19 @@ public class ApiProxyController {
             .connectTimeout(CONNECT_TIMEOUT)
             .build();
     private final InternalTokens tokens;
+    private final Tracer tracer;
+    private final Propagator propagator;
     private final String customerUrl;
     private final String accountUrl;
     private final String authUrl;
 
-    ApiProxyController(InternalTokens tokens,
+    ApiProxyController(InternalTokens tokens, Tracer tracer, Propagator propagator,
             @Value("${bank.services.customer-url}") String customerUrl,
             @Value("${bank.services.account-url}") String accountUrl,
             @Value("${bank.services.auth-url}") String authUrl) {
         this.tokens = tokens;
+        this.tracer = tracer;
+        this.propagator = propagator;
         this.customerUrl = customerUrl;
         this.accountUrl = accountUrl;
         this.authUrl = authUrl;
@@ -86,18 +94,36 @@ public class ApiProxyController {
             }
         });
 
-        try {
+        // This HttpClient is not instrumented, so the call gets its own span here, and the service
+        // receives the trace in a traceparent header and continues it.
+        String host = URI.create(serviceUrl).getHost();
+        Span.Builder builder = tracer.spanBuilder()
+                .name(request.getMethod() + " " + host)
+                .kind(Span.Kind.CLIENT)
+                .remoteServiceName(host)
+                .tag("http.request.method", request.getMethod())
+                .tag("server.address", host);
+        TraceContext parent = tracer.currentTraceContext().context();
+        if (parent != null) {
+            builder.setParent(parent);
+        }
+        Span call = builder.start();
+        propagator.inject(call.context(), forwarded, HttpRequest.Builder::header);
+        try (Tracer.SpanInScope scope = tracer.withSpan(call)) {
             HttpResponse<byte[]> answer = httpClient.send(forwarded.build(), HttpResponse.BodyHandlers.ofByteArray());
+            call.tag("http.response.status_code", String.valueOf(answer.statusCode()));
             response.setStatus(answer.statusCode());
             RESPONSE_HEADERS.forEach(name ->
                     answer.headers().firstValue(name).ifPresent(value -> response.setHeader(name, value)));
             response.getOutputStream().write(answer.body());
         } catch (ConnectException | HttpConnectTimeoutException e) {
+            call.error(e);
             log.warn("Could not connect to {}: {}", serviceUrl, e.toString());
             Problems.write(response, HttpStatus.SERVICE_UNAVAILABLE,
                     "Part of the system is temporarily unavailable. Nothing was changed; please try again shortly.");
         } catch (IOException e) {
             // The request went out but no answer came back, so it may have been carried out.
+            call.error(e);
             log.warn("No answer from {}: {}", serviceUrl, e.toString());
             Problems.write(response, HttpStatus.GATEWAY_TIMEOUT, request.getHeader(IdempotencyFilter.KEY_HEADER) != null
                     ? "No answer was received. It is safe to send this again with the same Idempotency-Key."
@@ -105,6 +131,8 @@ public class ApiProxyController {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             Problems.write(response, HttpStatus.SERVICE_UNAVAILABLE, "The server is shutting down.");
+        } finally {
+            call.end();
         }
     }
 

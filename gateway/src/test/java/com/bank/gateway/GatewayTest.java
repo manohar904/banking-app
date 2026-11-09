@@ -264,6 +264,22 @@ class GatewayTest {
         return new String(Base64.getDecoder().decode(cookie), StandardCharsets.UTF_8);
     }
 
+    /** The service continues the gateway's trace, so one request can be followed across services. */
+    @Test
+    void forwardedRequestsCarryTheTrace() throws Exception {
+        browser.signIn();
+        String incomingTrace = "4bf92f3577b34da6a3ce929d0e0e4736";
+
+        browser.send(browser.request("/api/accounts/1")
+                .header("traceparent", "00-" + incomingTrace + "-00f067aa0ba902b7-01").GET());
+
+        String forwarded = accounts.lastTraceparent.get();
+        assertThat(forwarded).matches("00-[0-9a-f]{32}-[0-9a-f]{16}-01");
+        // Same trace, new parent: the gateway's own span for the call.
+        assertThat(forwarded.split("-")[1]).isEqualTo(incomingTrace);
+        assertThat(forwarded.split("-")[2]).isNotEqualTo("00f067aa0ba902b7");
+    }
+
     @Test
     void idempotencyKeyIsPassedOnAndAReplayIsMarked() throws Exception {
         browser.signIn();
@@ -372,6 +388,7 @@ class GatewayTest {
         final AtomicReference<String> lastAuthorization = new AtomicReference<>();
         final AtomicReference<String> lastBody = new AtomicReference<>();
         final AtomicReference<String> lastIdempotencyKey = new AtomicReference<>();
+        final AtomicReference<String> lastTraceparent = new AtomicReference<>();
         final AtomicReference<Boolean> hangUp = new AtomicReference<>(false);
         private volatile int status = 200;
         private volatile String body = "{}";
@@ -398,6 +415,7 @@ class GatewayTest {
             lastAuthorization.set(null);
             lastBody.set(null);
             lastIdempotencyKey.set(null);
+            lastTraceparent.set(null);
             hangUp.set(false);
             answer(200, "{}");
         }
@@ -440,6 +458,7 @@ class GatewayTest {
             lastAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             lastBody.set(requestBody);
             lastIdempotencyKey.set(exchange.getRequestHeaders().getFirst("Idempotency-Key"));
+            lastTraceparent.set(exchange.getRequestHeaders().getFirst("traceparent"));
             if (hangUp.get()) {
                 exchange.close();
                 return;

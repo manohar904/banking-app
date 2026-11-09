@@ -1,0 +1,32 @@
+# Tempo stores the traces the services send, for Grafana to show. One process, files on a volume.
+# Based on Tempo 3.1's single-binary example.
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: "0.0.0.0:4318"
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+# How long traces are kept.
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 72h
+
+usage_report:
+  reporting_enabled: false

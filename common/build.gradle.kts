@@ -18,6 +18,8 @@ dependencies {
     api("org.springframework.boot:spring-boot-starter-actuator")
     api("org.springframework.boot:spring-boot-starter-micrometer-metrics")
     api("io.micrometer:micrometer-registry-prometheus")
+    // Traces requests across the services and sends them to Tempo over OTLP.
+    api("org.springframework.boot:spring-boot-starter-opentelemetry")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }

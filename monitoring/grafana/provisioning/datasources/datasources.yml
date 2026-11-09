@@ -15,3 +15,16 @@ datasources:
     jsonData:
       index: bank-logs-*
       timeField: "@timestamp"
+  # Traces of requests across the services. "Logs for this span" opens the matching log lines.
+  - name: Traces
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: bank-logs
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        customQuery: true
+        query: 'traceId:"$${__trace.traceId}"'

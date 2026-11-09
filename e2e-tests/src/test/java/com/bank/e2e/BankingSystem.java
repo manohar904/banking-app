@@ -33,6 +33,7 @@ final class BankingSystem implements AutoCloseable {
     private final Map<String, Process> processes = new LinkedHashMap<>();
     private Map<String, String> urls;
     private final HttpClient http = HttpClient.newHttpClient();
+    final TraceReceiver traces;
     final int gatewayPort;
     final int customerPort;
     final int accountPort;
@@ -45,6 +46,7 @@ final class BankingSystem implements AutoCloseable {
         accountPort = freePort();
         authPort = freePort();
         gatewayManagementPort = freePort();
+        traces = new TraceReceiver();
     }
 
     void start(String adminEmail, String adminPassword) throws Exception {
@@ -106,6 +108,8 @@ final class BankingSystem implements AutoCloseable {
         env.put("DB_PORT", String.valueOf(postgres.getMappedPort(5432)));
         env.put("DB_USERNAME", postgres.getUsername());
         env.put("DB_PASSWORD", postgres.getPassword());
+        env.put("MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT", traces.endpoint());
+        env.put("MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_SCHEDULE_DELAY", "200ms");
         File log = logFile(service).toFile();
         Files.createDirectories(log.toPath().getParent());
         builder.redirectErrorStream(true).redirectOutput(log);
@@ -145,6 +149,7 @@ final class BankingSystem implements AutoCloseable {
     @Override
     public void close() {
         processes.values().forEach(Process::destroy);
+        traces.close();
         redis.stop();
         kafka.stop();
         postgres.stop();

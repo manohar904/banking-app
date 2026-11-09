@@ -224,6 +224,19 @@ class BankingSystemTest {
     }
 
     @Test
+    void staffActionsReachTheAuditLogThroughTheGateway() throws Exception {
+        Holder ada = holder();
+
+        Browser.Response audit = staff.get("/api/accounts/audit?targetId=" + ada.accountId());
+
+        assertThat(audit.status()).isEqualTo(200);
+        assertThat(audit.<String>read("$.content[0].action")).isEqualTo("MONEY_DEPOSITED");
+        assertThat(audit.<String>read("$.content[0].actorRole")).isEqualTo("STAFF");
+        assertThat(audit.<Number>read("$.content[0].actorUserId").longValue()).isPositive();
+        assertThat(signedIn(ada.email(), PASSWORD).get("/api/accounts/audit").status()).isEqualTo(403);
+    }
+
+    @Test
     void customerSeesTheirOwnRecords() throws Exception {
         Holder ada = holder();
         Browser session = signedIn(ada.email(), PASSWORD);

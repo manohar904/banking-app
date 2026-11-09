@@ -27,6 +27,10 @@ public final class Callers {
         return asLong(token, InternalTokens.USER_ID_CLAIM);
     }
 
+    public static String roleOf(Jwt token) {
+        return token.getClaimAsString(InternalTokens.ROLE_CLAIM);
+    }
+
     /** Staff may see everyone; a customer only themselves. */
     public static boolean canViewCustomer(Authentication authentication, Long customerId) {
         return isStaff(authentication)

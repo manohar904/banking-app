@@ -1,8 +1,23 @@
 spring:
   application:
     name: customer-service
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      "[mail.smtp.auth]": true
+      "[mail.smtp.starttls.enable]": true
+      "[mail.smtp.starttls.required]": true
+      "[mail.smtp.connectiontimeout]": 5000
+      "[mail.smtp.timeout]": 5000
+      "[mail.smtp.writetimeout]": 5000
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    consumer:
+      # Latest: turning this on must not email people about transactions from before it existed.
+      auto-offset-reset: latest
     producer:
       acks: all
       properties:
@@ -29,6 +44,10 @@ server:
   port: 8081
 
 management:
+  health:
+    mail:
+      # A mail outage must not mark the service unhealthy: only these emails need it.
+      enabled: false
   endpoints:
     web:
       exposure:
@@ -39,6 +58,9 @@ management:
         http.server.requests: true
 
 bank:
+  transaction-emails:
+    # Empty turns transaction emails off for everyone.
+    from: ${MAIL_FROM:}
   audit:
     path: /api/customers/audit
   internal:

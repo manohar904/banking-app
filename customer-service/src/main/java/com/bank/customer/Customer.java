@@ -32,6 +32,10 @@ public class Customer {
     @Column(nullable = false, unique = true, length = 254)
     private String email;
 
+    /** Whether this customer is emailed when money moves. Only staff can change it. */
+    @Column(nullable = false)
+    private boolean transactionEmailsEnabled = true;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -42,6 +46,10 @@ public class Customer {
 
     public Customer(String firstName, String lastName, String email) {
         update(firstName, lastName, email);
+    }
+
+    public void setTransactionEmailsEnabled(boolean enabled) {
+        this.transactionEmailsEnabled = enabled;
     }
 
     public final void update(String firstName, String lastName, String email) {

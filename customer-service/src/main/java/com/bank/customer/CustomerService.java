@@ -64,6 +64,14 @@ public class CustomerService {
         return CustomerResponse.from(saved);
     }
 
+    public CustomerResponse setTransactionEmails(Long id, boolean enabled) {
+        Customer customer = findCustomer(id);
+        customer.setTransactionEmailsEnabled(enabled);
+        Customer saved = customerRepository.saveAndFlush(customer);
+        events.record("TRANSACTION_EMAILS_CHANGED", id, Map.of("enabled", enabled));
+        return CustomerResponse.from(saved);
+    }
+
     /**
      * The steps span three databases, so they cannot share a transaction. Each is safe to repeat and
      * the customer's row goes last, so after a failure the same delete can simply be tried again.

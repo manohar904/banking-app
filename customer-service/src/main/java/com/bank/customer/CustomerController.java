@@ -2,6 +2,7 @@ package com.bank.customer;
 
 import com.bank.customer.dto.CustomerRequest;
 import com.bank.customer.dto.CustomerResponse;
+import com.bank.customer.dto.TransactionEmailsRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
 import lombok.RequiredArgsConstructor;
@@ -48,6 +49,12 @@ public class CustomerController {
     @PutMapping("/{id}")
     public CustomerResponse update(@PathVariable Long id, @Valid @RequestBody CustomerRequest request) {
         return customerService.update(id, request);
+    }
+
+    @PutMapping("/{id}/transaction-emails")
+    public CustomerResponse setTransactionEmails(@PathVariable Long id,
+            @Valid @RequestBody TransactionEmailsRequest request) {
+        return customerService.setTransactionEmails(id, request.enabled());
     }
 
     @DeleteMapping("/{id}")

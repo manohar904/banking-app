@@ -19,6 +19,7 @@ import com.bank.common.ConflictException;
 import com.bank.common.security.InternalTokens;
 import com.bank.customer.AccountServiceClient;
 import com.bank.customer.AuthServiceClient;
+import com.bank.customer.TransactionEmails;
 import com.jayway.jsonpath.JsonPath;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -39,6 +40,9 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mail.MailSendException;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -54,7 +58,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  */
 @SpringBootTest(properties = {
         "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
-        "bank.kafka.enabled=false"
+        "bank.kafka.enabled=false",
+        "bank.transaction-emails.from=bank@example.com"
 })
 @AutoConfigureMockMvc
 @Testcontainers
@@ -79,6 +84,12 @@ class CustomerApiIntegrationTest {
 
     @MockitoBean
     private AuthServiceClient authService;
+
+    @MockitoBean
+    private JavaMailSender mail;
+
+    @Autowired
+    private TransactionEmails transactionEmails;
 
     @Test
     void migrationsApplyToAnEmptyDatabase() {
@@ -292,6 +303,178 @@ class CustomerApiIntegrationTest {
 
         mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/customers/audit")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void anEmailAddressIsRequiredForEveryCustomer() throws Exception {
+        mockMvc.perform(asStaff(post("/api/customers")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"firstName\": \"Ada\", \"lastName\": \"Lovelace\"}"))
+                .andExpect(status().isBadRequest());
+        postCustomer("not-an-email").andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void transactionEmailsAreOnByDefaultAndCustomersCanSeeTheSetting() throws Exception {
+        long ada = createCustomer();
+
+        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/customers/{id}", ada)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionEmailsEnabled").value(true));
+    }
+
+    @Test
+    void staffCanTurnTransactionEmailsOffAndOnAndItIsAudited() throws Exception {
+        long customer = createCustomer();
+
+        setTransactionEmails(asStaff(put("/api/customers/{id}/transaction-emails", customer)), false)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionEmailsEnabled").value(false));
+        setTransactionEmails(asStaff(put("/api/customers/{id}/transaction-emails", customer)), true)
+                .andExpect(jsonPath("$.transactionEmailsEnabled").value(true));
+
+        assertThat(jdbc.queryForObject("select count(*) from audit_log where action = 'TRANSACTION_EMAILS_CHANGED' and target_id = ?",
+                Long.class, String.valueOf(customer))).isEqualTo(2);
+    }
+
+    @Test
+    void customerCannotChangeTheirTransactionEmailSetting() throws Exception {
+        long ada = createCustomer();
+
+        setTransactionEmails(as(tokens.forUser(1L, "CUSTOMER", ada), put("/api/customers/{id}/transaction-emails", ada)), false)
+                .andExpect(status().isForbidden());
+
+        assertThat(emailsEnabled(ada)).isTrue();
+    }
+
+    @Test
+    void aDepositEmailsTheCustomerWithExactAmountsAndOnlyTheLastFourDigits() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+
+        deliver("MONEY_DEPOSITED", customer, "12345678901234567.89", "99999999999999999.10");
+
+        SimpleMailMessage message = emailsTo(email).getFirst();
+        assertThat(message.getSubject()).isEqualTo("Deposit of 12,345,678,901,234,567.89 to your account ending 7265");
+        assertThat(message.getFrom()).isEqualTo("bank@example.com");
+        assertThat(message.getText()).contains("Hello Ada", "New balance: 99,999,999,999,999,999.10");
+    }
+
+    @Test
+    void eachKindOfMovementIsWordedCorrectly() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+
+        deliver("MONEY_WITHDRAWN", customer, "1.50", "2.00");
+        deliver("TRANSFER_SENT", customer, "3.00", "4.00");
+        deliver("TRANSFER_RECEIVED", customer, "5.00", "6.00");
+
+        assertThat(emailsTo(email)).extracting(SimpleMailMessage::getSubject).containsExactlyInAnyOrder(
+                "Withdrawal of 1.50 from your account ending 7265",
+                "Transfer of 3.00 from your account ending 7265",
+                "Transfer of 5.00 to your account ending 7265");
+    }
+
+    @Test
+    void noEmailIsSentWhenStaffHaveTurnedThemOff() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+        setTransactionEmails(asStaff(put("/api/customers/{id}/transaction-emails", customer)), false);
+
+        deliver("MONEY_DEPOSITED", customer, "1.00", "1.00");
+
+        assertThat(emailsTo(email)).isEmpty();
+    }
+
+    @Test
+    void aRepeatedEventSendsOneEmail() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+        String event = moneyEvent(UUID.randomUUID().toString(), "MONEY_DEPOSITED", customer, "1.00", "1.00");
+
+        transactionEmails.handle(event);
+        transactionEmails.handle(event);
+        transactionEmails.sendPending();
+        transactionEmails.handle(event);
+        transactionEmails.sendPending();
+
+        assertThat(emailsTo(email)).hasSize(1);
+    }
+
+    @Test
+    void otherEventsAndUnreadableOnesSendNothing() {
+        long before = jdbc.queryForObject("select count(*) from transaction_emails", Long.class);
+
+        transactionEmails.handle("{\"eventId\":\"a\",\"type\":\"CUSTOMER_CREATED\",\"data\":{}}");
+        transactionEmails.handle("{\"eventId\":\"b\",\"type\":\"MONEY_DEPOSITED\",\"data\":{\"amount\":1.00}}");
+        transactionEmails.handle(moneyEvent("c", "MONEY_DEPOSITED", Long.MAX_VALUE, "1.00", "1.00"));
+        transactionEmails.handle("not json");
+
+        assertThat(jdbc.queryForObject("select count(*) from transaction_emails", Long.class)).isEqualTo(before);
+    }
+
+    @Test
+    void anEmailThatFailsIsTriedAgainLater() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+        doThrow(new MailSendException("down")).doNothing()
+                .when(mail).send(org.mockito.ArgumentMatchers.argThat((SimpleMailMessage m) -> m != null && m.getTo()[0].equals(email)));
+        String eventId = UUID.randomUUID().toString();
+        transactionEmails.handle(moneyEvent(eventId, "MONEY_DEPOSITED", customer, "1.00", "1.00"));
+
+        transactionEmails.sendPending();
+        assertThat(sentAt(eventId)).isNull();
+
+        // Not retried before its time.
+        transactionEmails.sendPending();
+        assertThat(emailsTo(email)).hasSize(1);
+
+        jdbc.update("update transaction_emails set next_attempt_at = now() where event_id = ?", eventId);
+        transactionEmails.sendPending();
+        assertThat(sentAt(eventId)).isNotNull();
+    }
+
+    @Test
+    void anEmailIsAbandonedAfterTooManyFailures() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+        String eventId = UUID.randomUUID().toString();
+        transactionEmails.handle(moneyEvent(eventId, "MONEY_DEPOSITED", customer, "1.00", "1.00"));
+        jdbc.update("update transaction_emails set attempts = 10 where event_id = ?", eventId);
+
+        transactionEmails.sendPending();
+
+        assertThat(emailsTo(email)).isEmpty();
+    }
+
+    private ResultActions setTransactionEmails(MockHttpServletRequestBuilder request, boolean enabled) throws Exception {
+        return mockMvc.perform(request.contentType(MediaType.APPLICATION_JSON).content("{\"enabled\": " + enabled + "}"));
+    }
+
+    private boolean emailsEnabled(long customer) {
+        return jdbc.queryForObject("select transaction_emails_enabled from customers where id = ?", Boolean.class, customer);
+    }
+
+    private java.sql.Timestamp sentAt(String eventId) {
+        return jdbc.queryForObject("select sent_at from transaction_emails where event_id = ?", java.sql.Timestamp.class, eventId);
+    }
+
+    private void deliver(String type, long customer, String amount, String balance) {
+        transactionEmails.handle(moneyEvent(UUID.randomUUID().toString(), type, customer, amount, balance));
+        transactionEmails.sendPending();
+    }
+
+    /** The same shape account-service publishes. */
+    private static String moneyEvent(String eventId, String type, long customer, String amount, String balance) {
+        return "{\"eventId\":\"" + eventId + "\",\"type\":\"" + type + "\",\"data\":{\"amount\":" + amount
+                + ",\"balanceAfter\":" + balance + ",\"customerId\":" + customer + ",\"accountEnding\":\"7265\"}}";
+    }
+
+    private List<SimpleMailMessage> emailsTo(String email) {
+        return org.mockito.Mockito.mockingDetails(mail).getInvocations().stream()
+                .filter(invocation -> invocation.getMethod().getName().equals("send"))
+                .map(invocation -> (SimpleMailMessage) invocation.getArgument(0))
+                .filter(message -> message.getTo()[0].equals(email))
+                .toList();
     }
 
     private MockHttpServletRequestBuilder asStaff(MockHttpServletRequestBuilder request) {

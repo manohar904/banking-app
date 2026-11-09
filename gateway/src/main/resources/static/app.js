@@ -136,11 +136,14 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", tim
 const titleCase = (word) => word.charAt(0) + word.slice(1).toLowerCase();
 
 let toastTimer;
-function toast(message) {
-  $("toast").textContent = message;
-  $("toast").hidden = false;
+function toast(message, kind = "success") {
+  const isError = kind === "error";
+  const banner = $("toast");
+  banner.className = `toast toast-${kind}`;
+  banner.replaceChildren(el("span", { class: "toast-icon", "aria-hidden": "true" }, isError ? "!" : "✓"), message);
+  banner.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $("toast").hidden = true; }, 4000);
+  toastTimer = setTimeout(() => { banner.hidden = true; }, isError ? 10000 : 7000);
 }
 
 function pager(page, onChange) {
@@ -296,7 +299,7 @@ function renderCustomers() {
       }, avatar(customer), el("span", { class: "person-text" },
         `${customer.firstName} ${customer.lastName}`, el("small", {}, customer.email))))));
   }
-  const controls = pager(page, (next) => loadCustomers(next).catch((error) => toast(error.message)));
+  const controls = pager(page, (next) => loadCustomers(next).catch((error) => toast(error.message, "error")));
   $("customer-pager").replaceChildren(...(controls ? [controls] : []));
 }
 
@@ -708,7 +711,7 @@ $("sign-out").onclick = async () => {
     // A full reload leaves nothing from this session in memory.
     window.location.reload();
   } catch (error) {
-    toast(error.message);
+    toast(error.message, "error");
   }
 };
 

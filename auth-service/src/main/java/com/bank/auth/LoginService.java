@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +24,7 @@ public class LoginService {
     private final PasswordEncoder passwordEncoder;
     private final DomainEvents events;
     private final SignInLimiter signInLimiter;
+    private final JdbcTemplate jdbc;
 
     /** Creates the customer's login, or resets the password if they already have one. */
     public void setCustomerPassword(Long customerId, String password) {
@@ -35,6 +37,7 @@ public class LoginService {
         userRepository.saveAndFlush(user);
         // Staff have just helped this person, so they should not have to wait out the limit as well.
         signInLimiter.clear(email);
+        discardResetLink(user.getId());
         events.record("LOGIN_SET", customerId, Map.of());
     }
 
@@ -42,6 +45,7 @@ public class LoginService {
     public void changeCustomerEmail(Long customerId, String email) {
         userRepository.findByCustomerId(customerId).ifPresent(user -> {
             user.changeEmail(email);
+            discardResetLink(user.getId());
             userRepository.saveAndFlush(user);
             events.record("LOGIN_EMAIL_CHANGED", customerId, Map.of());
         });
@@ -61,10 +65,16 @@ public class LoginService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The current password is incorrect.");
         }
         user.changePasswordHash(encode(newPassword));
+        discardResetLink(userId);
         events.record("PASSWORD_CHANGED", userId, Map.of());
     }
 
-    String encode(String password) {
+    /** A link sent before the password or email changed should not keep working afterwards. */
+    private void discardResetLink(Long userId) {
+        jdbc.update("delete from password_reset_tokens where user_id = ?", userId);
+    }
+
+    public String encode(String password) {
         if (password.getBytes(StandardCharsets.UTF_8).length > BCRYPT_MAX_BYTES) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The password is too long.");
         }

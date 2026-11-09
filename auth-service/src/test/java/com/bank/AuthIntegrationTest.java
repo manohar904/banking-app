@@ -1,11 +1,17 @@
 package com.bank;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -16,7 +22,10 @@ import com.jayway.jsonpath.JsonPath;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -24,6 +33,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -39,6 +50,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(properties = {
         "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
         "bank.kafka.enabled=false",
+        "bank.password-reset.from=bank@example.com",
+        "bank.password-reset.base-url=https://bank.example",
         "bank.admin.email=Boss@Example.com",
         "bank.admin.password=" + AuthIntegrationTest.STAFF_PASSWORD
 })
@@ -67,6 +80,9 @@ class AuthIntegrationTest {
 
     @MockitoBean
     private CustomerServiceClient customerService;
+
+    @MockitoBean
+    private JavaMailSender mail;
 
     @Test
     void firstStaffLoginIsCreatedFromConfigurationWithAHashedPassword() {
@@ -369,6 +385,171 @@ class AuthIntegrationTest {
 
         mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), get("/api/auth/audit/actors")).param("ids", ids))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void aResetLinkChangesThePasswordAndPointsAtTheConfiguredAddress() throws Exception {
+        String email = newLogin(newCustomerId());
+
+        requestReset(email).andExpect(status().isAccepted());
+        SimpleMailMessage message = resetEmails(email, 1).getFirst();
+        assertThat(message.getText()).contains("https://bank.example/#reset=");
+        assertThat(message.getFrom()).isEqualTo("bank@example.com");
+
+        confirmReset(tokenIn(message), "a-brand-new-password").andExpect(status().isNoContent());
+
+        authenticate(email, PASSWORD).andExpect(status().isUnauthorized());
+        authenticate(email, "a-brand-new-password").andExpect(status().isOk());
+    }
+
+    @Test
+    void aResetLinkWorksOnlyOnce() throws Exception {
+        String email = newLogin(newCustomerId());
+        requestReset(email);
+        String token = tokenIn(resetEmails(email, 1).getFirst());
+
+        confirmReset(token, "a-brand-new-password").andExpect(status().isNoContent());
+
+        confirmReset(token, "another-new-password").andExpect(status().isBadRequest());
+        authenticate(email, "another-new-password").andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void anExpiredResetLinkIsRefused() throws Exception {
+        String email = newLogin(newCustomerId());
+        requestReset(email);
+        String token = tokenIn(resetEmails(email, 1).getFirst());
+        jdbc.update("update password_reset_tokens set expires_at = now() - interval '1 minute'");
+
+        confirmReset(token, "a-brand-new-password").andExpect(status().isBadRequest());
+
+        authenticate(email, PASSWORD).andExpect(status().isOk());
+    }
+
+    @Test
+    void askingAgainCancelsTheEarlierLink() throws Exception {
+        String email = newLogin(newCustomerId());
+        requestReset(email);
+        requestReset(email);
+        List<SimpleMailMessage> emails = resetEmails(email, 2);
+
+        confirmReset(tokenIn(emails.get(0)), "a-brand-new-password").andExpect(status().isBadRequest());
+        confirmReset(tokenIn(emails.get(1)), "a-brand-new-password").andExpect(status().isNoContent());
+    }
+
+    @Test
+    void anEmailWithoutAnAccountGetsTheSameAnswerAndNoEmail() throws Exception {
+        String unknown = uniqueEmail();
+
+        requestReset(unknown).andExpect(status().isAccepted()).andExpect(content().string(""));
+
+        verify(mail, after(300).never()).send(argThat((SimpleMailMessage m) -> m.getTo()[0].equals(unknown)));
+    }
+
+    @Test
+    void resetEmailsToOneAddressAreLimited() throws Exception {
+        String email = newLogin(newCustomerId());
+
+        for (int request = 1; request <= 5; request++) {
+            requestReset(email).andExpect(status().isAccepted());
+        }
+
+        resetEmails(email, 3);
+        verify(mail, after(300).times(3)).send(argThat((SimpleMailMessage m) -> m.getTo()[0].equals(email)));
+    }
+
+    @Test
+    void aTooShortPasswordIsRefusedAndTheLinkStillWorks() throws Exception {
+        String email = newLogin(newCustomerId());
+        requestReset(email);
+        String token = tokenIn(resetEmails(email, 1).getFirst());
+
+        confirmReset(token, "short").andExpect(status().isBadRequest());
+        // 40 characters, so it passes the length check, but over BCrypt's limit in bytes.
+        confirmReset(token, "€".repeat(40)).andExpect(status().isBadRequest());
+
+        confirmReset(token, "a-brand-new-password").andExpect(status().isNoContent());
+    }
+
+    @Test
+    void aResetLiftsTheSignInLimit() throws Exception {
+        String email = newLogin(newCustomerId());
+        useUpAttempts(email);
+        requestReset(email);
+
+        confirmReset(tokenIn(resetEmails(email, 1).getFirst()), "a-brand-new-password").andExpect(status().isNoContent());
+
+        authenticate(email, "a-brand-new-password").andExpect(status().isOk());
+    }
+
+    @Test
+    void staffSettingAPasswordCancelsAnOutstandingLink() throws Exception {
+        long customer = newCustomerId();
+        String email = newLogin(customer);
+        requestReset(email);
+        String token = tokenIn(resetEmails(email, 1).getFirst());
+
+        setLogin(customer, "set-by-staff-password").andExpect(status().isNoContent());
+
+        confirmReset(token, "a-brand-new-password").andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void theLinkItselfIsNotStored() throws Exception {
+        String email = newLogin(newCustomerId());
+        requestReset(email);
+        String token = tokenIn(resetEmails(email, 1).getFirst());
+
+        assertThat(jdbc.queryForList("select token_hash from password_reset_tokens", String.class)).doesNotContain(token);
+    }
+
+    @Test
+    void aResetIsAudited() throws Exception {
+        String email = newLogin(newCustomerId());
+        Number userId = JsonPath.read(authenticate(email, PASSWORD).andReturn().getResponse().getContentAsString(), "$.userId");
+        requestReset(email);
+
+        confirmReset(tokenIn(resetEmails(email, 1).getFirst()), "a-brand-new-password").andExpect(status().isNoContent());
+
+        assertThat(jdbc.queryForObject("select action from audit_log where target_id = ? order by id desc limit 1",
+                String.class, String.valueOf(userId))).isEqualTo("PASSWORD_RESET");
+    }
+
+    @Test
+    void onlyOtherServicesMayStartAReset() throws Exception {
+        String body = "{\"email\": \"" + STAFF_EMAIL + "\"}";
+
+        mockMvc.perform(post("/internal/password-reset-requests").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), post("/internal/password-reset-requests"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+    }
+
+    private ResultActions requestReset(String email) throws Exception {
+        return mockMvc.perform(as(tokens.forThisService(), post("/internal/password-reset-requests"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\": \"" + email + "\"}"));
+    }
+
+    private ResultActions confirmReset(String token, String password) throws Exception {
+        return mockMvc.perform(as(tokens.forThisService(), post("/internal/password-resets"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"token\": \"" + token + "\", \"newPassword\": \"" + password + "\"}"));
+    }
+
+    /** Emails go out in the background, so this waits for them. In the order they were sent. */
+    private List<SimpleMailMessage> resetEmails(String to, int expected) {
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mail, timeout(5000).times(expected)).send(argThat((SimpleMailMessage m) -> m != null && m.getTo()[0].equals(to)));
+        verify(mail, atLeast(expected)).send(sent.capture());
+        return sent.getAllValues().stream().filter(m -> m.getTo()[0].equals(to)).toList();
+    }
+
+    private static String tokenIn(SimpleMailMessage message) {
+        Matcher link = Pattern.compile("#reset=([\\w-]+)").matcher(message.getText());
+        assertThat(link.find()).isTrue();
+        return link.group(1);
     }
 
     private void useUpAttempts(String email) throws Exception {

@@ -20,6 +20,8 @@ import org.springframework.stereotype.Component;
 public class SignInLimiter {
 
     static final int MAX_ATTEMPTS = 5;
+    private static final int MAX_RESET_REQUESTS = 3;
+    private static final String RESET_REQUEST_PREFIX = "reset-request:";
     private static final int WINDOW_MINUTES = 15;
 
     private final JdbcTemplate jdbc;
@@ -29,6 +31,15 @@ public class SignInLimiter {
      * cannot all get through. Returns false if this attempt is over the limit.
      */
     public boolean allowAttempt(String email) {
+        return allow(hash(email), MAX_ATTEMPTS);
+    }
+
+    /** Counted separately from sign-ins. Stops someone flooding a person's inbox with reset emails. */
+    public boolean allowResetRequest(String email) {
+        return allow(hash(RESET_REQUEST_PREFIX + (email == null ? "" : email.trim())), MAX_RESET_REQUESTS);
+    }
+
+    private boolean allow(String key, int limit) {
         // Skip locked: another sign-in is already removing those rows.
         jdbc.update("""
                 delete from sign_in_attempts where email_hash in (
@@ -40,8 +51,8 @@ public class SignInLimiter {
                 insert into sign_in_attempts (email_hash, attempts, window_started_at) values (?, 1, now())
                 on conflict (email_hash) do update set attempts = sign_in_attempts.attempts + 1
                 returning attempts
-                """, Integer.class, hash(email));
-        return attempts != null && attempts <= MAX_ATTEMPTS;
+                """, Integer.class, key);
+        return attempts != null && attempts <= limit;
     }
 
     /** After a successful sign-in, or when staff set a new password. */
@@ -50,10 +61,13 @@ public class SignInLimiter {
     }
 
     private static String hash(String email) {
-        String normalized = email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+        return sha256(email == null ? "" : email.trim().toLowerCase(Locale.ROOT));
+    }
+
+    static String sha256(String value) {
         try {
             return HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256").digest(normalized.getBytes(StandardCharsets.UTF_8)));
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }

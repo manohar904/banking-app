@@ -248,6 +248,32 @@ async function selectAccount(id, transactionPage = 0) {
 
 /* ---------- Rendering ---------- */
 
+/** Initials on a colour that stays the same for each customer. */
+function avatar(customer, extraClass = "") {
+  const initials = `${customer.firstName.charAt(0)}${customer.lastName.charAt(0)}`.toUpperCase();
+  return el("span", { class: `avatar avatar-${customer.id % 6} ${extraClass}`, "aria-hidden": "true" }, initials);
+}
+
+function welcomePanel() {
+  if (!isStaff()) return el("div", { class: "panel" }, el("p", { class: "empty" }, "Nothing to show yet."));
+  return el("div", { class: "panel welcome" },
+    el("h2", {}, "Welcome back"),
+    el("p", {}, "Pick a customer on the left to see their accounts, or add a new one."),
+    el("div", { class: "welcome-tiles" },
+      el("div", { class: "welcome-tile tile-customers" },
+        el("strong", {}, "Customers"), el("span", {}, "Open accounts and manage sign-ins.")),
+      el("div", { class: "welcome-tile tile-money" },
+        el("strong", {}, "Money"), el("span", {}, "Deposit, withdraw and transfer.")),
+      el("div", { class: "welcome-tile tile-audit" },
+        el("strong", {}, "Audit log"), el("span", {}, "See who changed what, and when."))));
+}
+
+function auditBadgeClass(action) {
+  if (action.startsWith("MONEY") || action.startsWith("TRANSFER")) return "badge-money";
+  if (action.startsWith("LOGIN") || action.startsWith("PASSWORD")) return "badge-security";
+  return "badge-records";
+}
+
 function renderCustomers() {
   const list = $("customer-list");
   const { content, page } = state.customers;
@@ -260,7 +286,8 @@ function renderCustomers() {
         class: "list-button",
         "aria-current": state.customer?.id === customer.id ? "true" : "false",
         onclick: () => selectCustomer(customer.id),
-      }, `${customer.firstName} ${customer.lastName}`, el("small", {}, customer.email)))));
+      }, avatar(customer), el("span", { class: "person-text" },
+        `${customer.firstName} ${customer.lastName}`, el("small", {}, customer.email))))));
   }
   const controls = pager(page, (next) => loadCustomers(next).catch((error) => toast(error.message)));
   $("customer-pager").replaceChildren(...(controls ? [controls] : []));
@@ -274,8 +301,7 @@ function renderDetail() {
     return;
   }
   if (!state.customer) {
-    detail.replaceChildren(...[error, el("div", { class: "panel" },
-      el("p", { class: "empty" }, "Select a customer, or create a new one."))].filter(Boolean));
+    detail.replaceChildren(...[error, welcomePanel()].filter(Boolean));
     return;
   }
   detail.replaceChildren(...[error, customerPanel(), state.account ? accountPanel() : null].filter(Boolean));
@@ -286,18 +312,22 @@ function customerPanel() {
   const accountItems = accounts.map((account) => el("li", {},
     el("button", {
       type: "button",
-      class: "account-button",
+      class: `account-button account-${account.type.toLowerCase()}`,
       "aria-current": state.account?.id === account.id ? "true" : "false",
       onclick: () => selectAccount(account.id),
     },
-    el("span", {}, `${titleCase(account.type)} `, el("span", { class: "number muted" }, account.accountNumber)),
+    el("span", { class: "account-name" },
+      el("span", { class: "account-icon", "aria-hidden": "true" }, account.type.charAt(0)),
+      el("span", {}, titleCase(account.type), el("small", { class: "number muted" }, account.accountNumber))),
     el("span", { class: "money" }, moneyFormat.format(account.balance)))));
 
   return el("div", { class: "panel" },
     el("div", { class: "panel-head" },
-      el("div", {},
-        el("h2", {}, `${customer.firstName} ${customer.lastName}`),
-        el("p", { class: "muted" }, customer.email)),
+      el("div", { class: "person" },
+        avatar(customer, "avatar-large"),
+        el("div", { class: "person-text" },
+          el("h2", {}, `${customer.firstName} ${customer.lastName}`),
+          el("p", { class: "muted" }, customer.email))),
       isStaff() ? el("div", { class: "button-row" },
         el("button", { type: "button", onclick: () => openCustomerDialog(customer) }, "Edit"),
         el("button", { type: "button", onclick: openSetLoginDialog }, "Set password"),
@@ -333,7 +363,7 @@ function auditPanel() {
   const rows = entries.content.map((entry) => el("tr", {},
     el("td", {}, dateFormat.format(new Date(entry.occurredAt))),
     el("td", {}, auditActor(entry, actors)),
-    el("td", {}, titleCase(entry.action.replaceAll("_", " "))),
+    el("td", {}, el("span", { class: `badge ${auditBadgeClass(entry.action)}` }, titleCase(entry.action.replaceAll("_", " ")))),
     el("td", { class: "number" }, entry.targetId),
     el("td", { class: "wrap" }, auditDetails(entry.details))));
 
@@ -412,7 +442,9 @@ function accountPanel() {
     const isCredit = entry.type === "DEPOSIT" || entry.type === "TRANSFER_IN";
     return el("tr", {},
       el("td", {}, dateFormat.format(new Date(entry.createdAt))),
-      el("td", {}, entryLabel(entry)),
+      el("td", {}, el("span", { class: "txn" },
+        el("span", { class: `txn-icon ${isCredit ? "txn-in" : "txn-out"}`, "aria-hidden": "true" }, isCredit ? "↓" : "↑"),
+        entryLabel(entry))),
       el("td", { class: `right number${isCredit ? " credit" : ""}` },
         `${isCredit ? "+" : "−"}${moneyFormat.format(entry.amount)}`),
       el("td", { class: "right number" }, moneyFormat.format(entry.balanceAfter)));
@@ -424,7 +456,9 @@ function accountPanel() {
         el("h2", {}, `${titleCase(account.type)} account`),
         el("p", { class: "muted number" }, account.accountNumber)),
       isStaff() ? el("button", { type: "button", class: "danger", onclick: confirmDeleteAccount }, "Delete account") : null),
-    el("p", { class: "balance money" }, moneyFormat.format(account.balance)),
+    el("div", { class: `balance-card balance-${account.type.toLowerCase()}` },
+      el("p", { class: "balance-label" }, "Balance"),
+      el("p", { class: "balance money" }, moneyFormat.format(account.balance))),
     isStaff() ? el("form", {
       class: "money-form",
       novalidate: "",
@@ -723,7 +757,53 @@ $("confirm-form").onsubmit = (event) => {
   submitDialog($("confirm-dialog"), event.target, () => confirmAction());
 };
 
-start().catch((error) => {
+$("forgot-password").onclick = () => {
+  const form = $("forgot-form");
+  form.reset();
+  form.elements.email.value = $("login-form").elements.email.value.trim();
+  showFormError(form, null);
+  clearFieldErrors(form);
+  $("forgot-dialog").showModal();
+};
+
+$("forgot-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  submitDialog($("forgot-dialog"), form, async () => {
+    await api("/api/auth/password-reset", {
+      method: "POST",
+      expectSignedOut: true,
+      body: { email: form.elements.email.value.trim() },
+    });
+    toast("If that email has an account, a reset link is on its way. It works for 30 minutes.");
+  });
+};
+
+// The link's token is in the fragment. It is removed from the address bar straight away, so it
+// doesn't stay in the browser's history.
+const resetLink = window.location.hash.match(/^#reset=([\w-]+)$/);
+if (resetLink) history.replaceState(null, "", window.location.pathname);
+
+$("reset-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  submitDialog($("reset-dialog"), form, async () => {
+    await api("/api/auth/password-reset/confirm", {
+      method: "POST",
+      expectSignedOut: true,
+      body: { token: resetLink[1], newPassword: form.elements.newPassword.value },
+    });
+    form.reset();
+    toast("Password changed. You can sign in with it now.");
+  });
+};
+
+/** After start(), because showing the sign-in page closes any open dialog. */
+function openResetDialogFromLink() {
+  if (resetLink) $("reset-dialog").showModal();
+}
+
+start().then(openResetDialogFromLink).catch((error) => {
   state.detailError = error.message;
   renderDetail();
 });

@@ -207,6 +207,23 @@ class BankingSystemTest {
     }
 
     @Test
+    void staffCanTransferBetweenCustomersAndBothSeeIt() throws Exception {
+        Holder ada = holder();
+        Holder grace = holder();
+        String graceNumber = staff.get("/api/accounts/" + grace.accountId()).read("$.accountNumber");
+
+        Browser.Response sent = staff.post("/api/accounts/" + ada.accountId() + "/transfer",
+                "{\"toAccountNumber\": \"" + graceNumber + "\", \"amount\": 20.00}");
+
+        assertThat(sent.status()).isEqualTo(200);
+        assertThat(sent.<Number>read("$.balance").doubleValue()).isEqualTo(30.0);
+        Browser.Response received = signedIn(grace.email(), PASSWORD)
+                .get("/api/accounts/" + grace.accountId() + "/transactions");
+        assertThat(received.<String>read("$.content[0].type")).isEqualTo("TRANSFER_IN");
+        assertThat(staff.get("/api/accounts/" + grace.accountId()).<Number>read("$.balance").doubleValue()).isEqualTo(70.0);
+    }
+
+    @Test
     void customerSeesTheirOwnRecords() throws Exception {
         Holder ada = holder();
         Browser session = signedIn(ada.email(), PASSWORD);

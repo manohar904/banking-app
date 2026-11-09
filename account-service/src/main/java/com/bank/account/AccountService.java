@@ -10,11 +10,14 @@ import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 @RequiredArgsConstructor
@@ -67,6 +70,50 @@ public class AccountService {
         Account account = findAccount(id);
         account.withdraw(amount);
         return saveWithLedgerEntry(account, TransactionType.WITHDRAWAL, amount);
+    }
+
+    /**
+     * Both sides share one database transaction, so money is never taken without arriving.
+     *
+     * <p>The lower account id is always updated first. Otherwise A to B and B to A at the same moment
+     * could each hold the row the other needs and deadlock; this way the later one gets a clean 409.
+     * Each side is changed only just before it is flushed, so that a flush writes only that side.
+     */
+    public AccountResponse transfer(Long id, String toAccountNumber, BigDecimal amount) {
+        Account from = findAccount(id);
+        Account to = accountRepository.findByAccountNumber(toAccountNumber)
+                .orElseThrow(() -> new ResourceNotFoundException("No account has the number " + toAccountNumber + "."));
+        if (from.getId().equals(to.getId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An account cannot transfer to itself.");
+        }
+        UUID transferId = UUID.randomUUID();
+        if (from.getId() < to.getId()) {
+            sendTransfer(from, to, amount, transferId);
+            receiveTransfer(to, from, amount, transferId);
+        } else {
+            receiveTransfer(to, from, amount, transferId);
+            sendTransfer(from, to, amount, transferId);
+        }
+        return AccountResponse.from(from);
+    }
+
+    private void sendTransfer(Account from, Account to, BigDecimal amount, UUID transferId) {
+        from.withdraw(amount);
+        saveTransferSide(from, to, TransactionType.TRANSFER_OUT, "TRANSFER_SENT", amount, transferId);
+    }
+
+    private void receiveTransfer(Account to, Account from, BigDecimal amount, UUID transferId) {
+        to.deposit(amount);
+        saveTransferSide(to, from, TransactionType.TRANSFER_IN, "TRANSFER_RECEIVED", amount, transferId);
+    }
+
+    private void saveTransferSide(Account account, Account other, TransactionType type, String event,
+            BigDecimal amount, UUID transferId) {
+        Account saved = accountRepository.saveAndFlush(account);
+        transactionRepository.save(
+                new AccountTransaction(saved, type, amount, transferId, other.getAccountNumber()));
+        events.record(event, saved.getId(), Map.of("amount", amount, "balanceAfter", saved.getBalance(),
+                "transferId", transferId.toString(), "otherAccountId", other.getId()));
     }
 
     @Transactional(readOnly = true)

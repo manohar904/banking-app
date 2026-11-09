@@ -13,13 +13,14 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.Immutable;
 
-/** One completed deposit or withdrawal. Entries are never changed once written. */
+/** One completed deposit, withdrawal or side of a transfer. Entries are never changed once written. */
 @Entity
 @Table(name = "account_transactions")
 @Immutable
@@ -45,9 +46,25 @@ public class AccountTransaction {
     @Column(nullable = false, updatable = false, precision = 19, scale = 2)
     private BigDecimal balanceAfter;
 
+    /** The same on both sides of a transfer. Empty for deposits and withdrawals. */
+    @Column(updatable = false)
+    private UUID transferId;
+
+    /** The other account in a transfer. Empty for deposits and withdrawals. */
+    @Column(updatable = false, length = 12)
+    private String counterpartyAccountNumber;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
+
+    /** One side of a transfer. As with the constructor below, call after the balance has changed. */
+    public AccountTransaction(Account account, TransactionType type, BigDecimal amount, UUID transferId,
+            String counterpartyAccountNumber) {
+        this(account, type, amount);
+        this.transferId = transferId;
+        this.counterpartyAccountNumber = counterpartyAccountNumber;
+    }
 
     /** Call after the balance has changed, so that balanceAfter captures the new balance. */
     public AccountTransaction(Account account, TransactionType type, BigDecimal amount) {

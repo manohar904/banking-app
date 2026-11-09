@@ -177,6 +177,188 @@ class AccountApiIntegrationTest {
     }
 
     @Test
+    void transferMovesTheMoneyAndRecordsBothSides() throws Exception {
+        long from = fundedAccount("100.00");
+        long to = fundedAccount("5.00");
+
+        transfer(from, numberOf(to), "30.25")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(from))
+                .andExpect(jsonPath("$.balance").value(69.75));
+
+        assertThat(balance(from)).isEqualByComparingTo("69.75");
+        assertThat(balance(to)).isEqualByComparingTo("35.25");
+        mockMvc.perform(asStaff(get("/api/accounts/{id}/transactions", from)))
+                .andExpect(jsonPath("$.content[0].type").value("TRANSFER_OUT"))
+                .andExpect(jsonPath("$.content[0].amount").value(30.25))
+                .andExpect(jsonPath("$.content[0].balanceAfter").value(69.75))
+                .andExpect(jsonPath("$.content[0].counterpartyAccountNumber").value(numberOf(to)));
+        mockMvc.perform(asStaff(get("/api/accounts/{id}/transactions", to)))
+                .andExpect(jsonPath("$.content[0].type").value("TRANSFER_IN"))
+                .andExpect(jsonPath("$.content[0].balanceAfter").value(35.25))
+                .andExpect(jsonPath("$.content[0].counterpartyAccountNumber").value(numberOf(from)));
+        assertThat(jdbc.queryForObject("""
+                select count(distinct transfer_id) from account_transactions
+                where account_id in (?, ?) and transfer_id is not null
+                """, Long.class, from, to)).isEqualTo(1);
+    }
+
+    /** The order the two sides are written in depends on the ids, so both directions are tried. */
+    @Test
+    void transferWorksInBothDirections() throws Exception {
+        long lower = fundedAccount("10.00");
+        long higher = fundedAccount("10.00");
+
+        transfer(higher, numberOf(lower), "4.00").andExpect(status().isOk());
+        transfer(lower, numberOf(higher), "1.00").andExpect(status().isOk());
+
+        assertThat(balance(lower)).isEqualByComparingTo("13.00");
+        assertThat(balance(higher)).isEqualByComparingTo("7.00");
+    }
+
+    @Test
+    void transferWithoutEnoughMoneyChangesNothing() throws Exception {
+        long lower = fundedAccount("10.00");
+        long higher = fundedAccount("10.00");
+
+        transfer(lower, numberOf(higher), "10.01").andExpect(status().isUnprocessableContent());
+        // Here the receiving side is written first, so it has to be rolled back.
+        transfer(higher, numberOf(lower), "10.01").andExpect(status().isUnprocessableContent());
+
+        assertThat(balance(lower)).isEqualByComparingTo("10.00");
+        assertThat(balance(higher)).isEqualByComparingTo("10.00");
+        assertThat(ledgerEntries(lower)).isEqualTo(1);
+        assertThat(ledgerEntries(higher)).isEqualTo(1);
+    }
+
+    @Test
+    void transferThatWouldOverflowTheReceiverTakesNothingFromTheSender() throws Exception {
+        long from = fundedAccount("10.00");
+        long to = fundedAccount("99999999999999999.99");
+
+        transfer(from, numberOf(to), "1.00").andExpect(status().is4xxClientError());
+
+        assertThat(balance(from)).isEqualByComparingTo("10.00");
+        assertThat(balance(to)).isEqualByComparingTo("99999999999999999.99");
+        assertThat(ledgerEntries(from)).isEqualTo(1);
+    }
+
+    @Test
+    void anAccountCannotTransferToItself() throws Exception {
+        long account = fundedAccount("10.00");
+
+        transfer(account, numberOf(account), "1.00").andExpect(status().isBadRequest());
+
+        assertThat(balance(account)).isEqualByComparingTo("10.00");
+        assertThat(ledgerEntries(account)).isEqualTo(1);
+    }
+
+    @Test
+    void transferToOrFromAnUnknownAccountIs404() throws Exception {
+        long account = fundedAccount("10.00");
+
+        transfer(account, "000000000000", "1.00").andExpect(status().isNotFound());
+        transfer(Long.MAX_VALUE, numberOf(account), "1.00").andExpect(status().isNotFound());
+
+        assertThat(balance(account)).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void transferRequestsAreValidated() throws Exception {
+        long from = fundedAccount("10.00");
+        long to = fundedAccount("10.00");
+
+        transfer(from, "123", "1.00").andExpect(status().isBadRequest());
+        transfer(from, numberOf(to), "0.00").andExpect(status().isBadRequest());
+        transfer(from, numberOf(to), "1.001").andExpect(status().isBadRequest());
+
+        assertThat(balance(from)).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void customerCannotTransfer() throws Exception {
+        long ada = newCustomerId();
+        long from = createAccount(ada);
+        move(from, "deposit", "10.00").andExpect(status().isOk());
+        long to = fundedAccount("1.00");
+
+        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), post("/api/accounts/{id}/transfer", from))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toAccountNumber\": \"" + numberOf(to) + "\", \"amount\": 1.00}"))
+                .andExpect(status().isForbidden());
+
+        assertThat(balance(from)).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void customerSeesATransferInTheirHistory() throws Exception {
+        long ada = newCustomerId();
+        long account = createAccount(ada);
+        long from = fundedAccount("10.00");
+        transfer(from, numberOf(account), "2.00").andExpect(status().isOk());
+
+        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/accounts/{id}/transactions", account)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].type").value("TRANSFER_IN"))
+                .andExpect(jsonPath("$.content[0].transferId").doesNotExist());
+    }
+
+    @Test
+    void transferRepeatedWithTheSameKeyIsAppliedOnce() throws Exception {
+        long from = fundedAccount("10.00");
+        long to = fundedAccount("0.01");
+        String body = "{\"toAccountNumber\": \"" + numberOf(to) + "\", \"amount\": 3.00}";
+        MockHttpServletRequestBuilder request = asStaff(post("/api/accounts/{id}/transfer", from))
+                .header(IdempotencyFilter.KEY_HEADER, "transfer-key")
+                .contentType(MediaType.APPLICATION_JSON).content(body);
+
+        mockMvc.perform(request).andExpect(status().isOk());
+        mockMvc.perform(request)
+                .andExpect(status().isOk())
+                .andExpect(header().string(IdempotencyFilter.REPLAYED_HEADER, "true"));
+
+        assertThat(balance(from)).isEqualByComparingTo("7.00");
+        assertThat(balance(to)).isEqualByComparingTo("3.01");
+    }
+
+    /** Opposite directions at once: a deadlock would show up here as a 500. */
+    @Test
+    void simultaneousOppositeTransfersNeverLoseMoneyOrDeadlock() throws Exception {
+        long first = fundedAccount("1000.00");
+        long second = fundedAccount("1000.00");
+        String firstNumber = numberOf(first);
+        String secondNumber = numberOf(second);
+        Callable<Integer> forwards = () -> transfer(first, secondNumber, "1.00").andReturn().getResponse().getStatus();
+        Callable<Integer> backwards = () -> transfer(second, firstNumber, "2.00").andReturn().getResponse().getStatus();
+        List<Callable<Integer>> requests = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            requests.add(forwards);
+            requests.add(backwards);
+        }
+
+        List<Integer> statuses = runSimultaneously(requests);
+
+        assertThat(statuses).containsAnyOf(200).isSubsetOf(200, 409);
+        long acceptedForwards = 0;
+        long acceptedBackwards = 0;
+        for (int i = 0; i < statuses.size(); i++) {
+            if (statuses.get(i) == 200) {
+                if (i % 2 == 0) {
+                    acceptedForwards++;
+                } else {
+                    acceptedBackwards++;
+                }
+            }
+        }
+        assertThat(balance(first)).isEqualByComparingTo(
+                BigDecimal.valueOf(1000 - acceptedForwards + 2 * acceptedBackwards));
+        assertThat(balance(second)).isEqualByComparingTo(
+                BigDecimal.valueOf(1000 + acceptedForwards - 2 * acceptedBackwards));
+        assertThat(ledgerEntries(first)).isEqualTo(1 + acceptedForwards + acceptedBackwards);
+        assertThat(ledgerEntries(second)).isEqualTo(1 + acceptedForwards + acceptedBackwards);
+    }
+
+    @Test
     void databaseRejectsANegativeBalanceEvenWithoutTheApplication() throws Exception {
         long account = createAccount(newCustomerId());
 
@@ -462,6 +644,22 @@ class AccountApiIntegrationTest {
                 .header(IdempotencyFilter.KEY_HEADER, key)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"customerId\": " + customerId + ", \"type\": \"CHECKING\"}"));
+    }
+
+    private long fundedAccount(String amount) throws Exception {
+        long account = createAccount(newCustomerId());
+        move(account, "deposit", amount).andExpect(status().isOk());
+        return account;
+    }
+
+    private String numberOf(long accountId) {
+        return jdbc.queryForObject("select account_number from accounts where id = ?", String.class, accountId);
+    }
+
+    private ResultActions transfer(long fromId, String toNumber, String amount) throws Exception {
+        return mockMvc.perform(asStaff(post("/api/accounts/{id}/transfer", fromId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"toAccountNumber\": \"" + toNumber + "\", \"amount\": " + amount + "}"));
     }
 
     private Callable<Integer> deposit(long account) {

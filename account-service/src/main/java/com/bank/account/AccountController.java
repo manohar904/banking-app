@@ -4,6 +4,7 @@ import com.bank.account.dto.AccountResponse;
 import com.bank.account.dto.CreateAccountRequest;
 import com.bank.account.dto.MoneyRequest;
 import com.bank.account.dto.TransactionResponse;
+import com.bank.account.dto.TransferRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +60,12 @@ public class AccountController {
     @PostMapping("/{id}/withdraw")
     public AccountResponse withdraw(@PathVariable Long id, @Valid @RequestBody MoneyRequest request) {
         return accountService.withdraw(id, request.amount());
+    }
+
+    /** Answers with the account the money left. */
+    @PostMapping("/{id}/transfer")
+    public AccountResponse transfer(@PathVariable Long id, @Valid @RequestBody TransferRequest request) {
+        return accountService.transfer(id, request.toAccountNumber(), request.amount());
     }
 
     /** Newest entries first unless a sort parameter says otherwise. */

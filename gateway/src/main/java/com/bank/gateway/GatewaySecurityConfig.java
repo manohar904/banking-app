@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationServiceException;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.CsrfConfigurer;
@@ -45,7 +46,11 @@ public class GatewaySecurityConfig {
                         .successHandler((request, response, authentication) ->
                                 response.setStatus(HttpStatus.NO_CONTENT.value()))
                         .failureHandler((request, response, exception) -> {
-                            if (exception instanceof AuthenticationServiceException) {
+                            if (exception instanceof LockedException) {
+                                // Also answered for emails with no account, so it reveals nothing.
+                                Problems.write(response, HttpStatus.TOO_MANY_REQUESTS,
+                                        "Too many sign-in attempts. Please wait up to 15 minutes and try again.");
+                            } else if (exception instanceof AuthenticationServiceException) {
                                 // Not the user's mistake, so do not tell them the password is wrong.
                                 Problems.write(response, HttpStatus.SERVICE_UNAVAILABLE,
                                         "Sign-in is temporarily unavailable. Please try again shortly.");

@@ -28,15 +28,21 @@ public class InternalLoginController {
 
     private final AuthenticationManager credentialChecker;
     private final LoginService loginService;
+    private final SignInLimiter signInLimiter;
     private final MeterRegistry metrics;
 
     /** Checks a password for the gateway, which then holds the session. */
     @PostMapping("/authentications")
     public VerifiedUserResponse authenticate(@RequestBody CredentialsRequest request) {
+        if (!signInLimiter.allowAttempt(request.email())) {
+            metrics.counter("bank.signins", "outcome", "limited").increment();
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many sign-in attempts.");
+        }
         try {
             BankUserDetails user = (BankUserDetails) credentialChecker.authenticate(
                             UsernamePasswordAuthenticationToken.unauthenticated(request.email(), request.password()))
                     .getPrincipal();
+            signInLimiter.clear(request.email());
             metrics.counter("bank.signins", "outcome", "success").increment();
             return VerifiedUserResponse.from(user);
         } catch (AuthenticationException e) {

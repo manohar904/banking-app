@@ -91,6 +91,18 @@ start page still loads), and the gateway reports itself unhealthy, which raises 
 Sessions end after 30 minutes unused. If a gateway upgrade changes what a session holds, sessions it
 can't read count as signed out.
 
+### Sign-in limits
+
+Each email gets 5 sign-in attempts in a 15-minute window. After that the answer is a 429 and no password
+is checked, even a correct one, until the window ends. Signing in successfully or staff setting a new
+password clears the count. Emails with no account are limited the same way, so the limit doesn't reveal
+who has one, and only a hash of the email is stored.
+
+The limit is per email, so someone who knows an address can keep that person out for 15 minutes at a
+time, and one source trying a few guesses against many emails isn't slowed. `ManyFailedSignIns` still
+catches both. Limiting by address as well needs the gateway to know the caller's real IP, which depends
+on what sits in front of it in production.
+
 ## Events and monitoring
 
 ```

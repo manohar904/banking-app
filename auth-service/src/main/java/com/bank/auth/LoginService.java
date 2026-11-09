@@ -22,6 +22,7 @@ public class LoginService {
     private final CustomerServiceClient customerService;
     private final PasswordEncoder passwordEncoder;
     private final DomainEvents events;
+    private final SignInLimiter signInLimiter;
 
     /** Creates the customer's login, or resets the password if they already have one. */
     public void setCustomerPassword(Long customerId, String password) {
@@ -32,6 +33,8 @@ public class LoginService {
         user.changePasswordHash(hash);
         // Flushed here so an email already used by a staff login is reported as a 409.
         userRepository.saveAndFlush(user);
+        // Staff have just helped this person, so they should not have to wait out the limit as well.
+        signInLimiter.clear(email);
         events.record("LOGIN_SET", customerId, Map.of());
     }
 

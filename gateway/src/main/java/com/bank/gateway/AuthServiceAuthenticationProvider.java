@@ -8,6 +8,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -39,6 +40,8 @@ public class AuthServiceAuthenticationProvider implements AuthenticationProvider
                     List.of(new SimpleGrantedAuthority("ROLE_" + user.role())));
         } catch (HttpClientErrorException.Unauthorized e) {
             throw new BadCredentialsException("Incorrect email or password.");
+        } catch (HttpClientErrorException.TooManyRequests e) {
+            throw new LockedException("Too many sign-in attempts.");
         } catch (RestClientException e) {
             throw new AuthenticationServiceException("The auth service could not check the password.", e);
         }

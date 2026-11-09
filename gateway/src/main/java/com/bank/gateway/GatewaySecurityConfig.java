@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationServiceException;
+import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.CsrfConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
@@ -23,7 +24,9 @@ public class GatewaySecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http, AuthServiceAuthenticationProvider authService)
             throws Exception {
         http
-                .authenticationProvider(authService)
+                // Not authenticationProvider(): Spring would also add this bean to a parent manager,
+                // which is asked again after a failure, so each failed sign-in would be checked twice.
+                .authenticationManager(new ProviderManager(authService))
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers("/", "/index.html", "/app.js", "/styles.css", "/favicon.ico", "/error")
                         .permitAll()

@@ -299,6 +299,28 @@ class BankingSystemTest {
                 .isEqualTo(50.0);
     }
 
+    /** Opening an account goes gateway, account-service, customer-service: one trace covers all three. */
+    @Test
+    void oneRequestCanBeFollowedAcrossTheServices() throws Exception {
+        long customer = newCustomer(uniqueEmail());
+        String traceId = UUID.randomUUID().toString().replace("-", "");
+
+        Browser.Response opened = staff.postWithHeader("/api/accounts",
+                "{\"customerId\": " + customer + ", \"type\": \"CHECKING\"}",
+                "traceparent", "00-" + traceId + "-00f067aa0ba902b7-01");
+        assertThat(opened.status()).isEqualTo(201);
+
+        Instant deadline = Instant.now().plusSeconds(20);
+        while (!(system.traces.hasSpan("gateway", traceId)
+                && system.traces.hasSpan("account-service", traceId)
+                && system.traces.hasSpan("customer-service", traceId)) && Instant.now().isBefore(deadline)) {
+            Thread.sleep(200);
+        }
+        assertThat(system.traces.hasSpan("gateway", traceId)).isTrue();
+        assertThat(system.traces.hasSpan("account-service", traceId)).isTrue();
+        assertThat(system.traces.hasSpan("customer-service", traceId)).isTrue();
+    }
+
     @Test
     void restartingTheGatewaySignsNobodyOut() throws Exception {
         Holder ada = holder();

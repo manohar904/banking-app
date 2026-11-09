@@ -23,6 +23,8 @@ x-service-env: &service-env
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   # One JSON object per log line, which is what Elasticsearch needs.
   LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+  # Where traces go: Tempo, which runs with the monitoring profile. Without it they are dropped.
+  MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: ${TRACING_ENDPOINT:-http://tempo:4318/v1/traces}
 
 x-db-ready: &db-ready
   db-init:
@@ -228,6 +230,7 @@ services:
       AUTH_SERVICE_URL: http://auth-service:8083
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: ${TRACING_ENDPOINT:-http://tempo:4318/v1/traces}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD:-bank_dev_redis_password}
@@ -398,11 +401,24 @@ services:
     restart: unless-stopped
     mem_limit: 128m
 
+  # Keeps the traces of requests across the services, for 3 days. Viewed in Grafana (Explore, Tempo).
+  tempo:
+    image: grafana/tempo:3.1.1
+    profiles: [monitoring]
+    command: ["-target=all", "-config.file=/etc/tempo.yaml"]
+    # The image has no shell or wget, so there is no healthcheck; Grafana shows it if Tempo is down.
+    volumes:
+      - ./monitoring/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    restart: unless-stopped
+    mem_limit: 512m
+
   grafana:
     image: grafana/grafana:13.2.5
     profiles: [monitoring]
     depends_on:
       - prometheus
+      - tempo
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
@@ -425,3 +441,4 @@ volumes:
   prometheus-data:
   alertmanager-data:
   grafana-data:
+  tempo-data:

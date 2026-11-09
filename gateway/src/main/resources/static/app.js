@@ -307,6 +307,32 @@ function renderDetail() {
   detail.replaceChildren(...[error, customerPanel(), state.account ? accountPanel() : null].filter(Boolean));
 }
 
+/** Everyone can see the setting. Only staff can change it. */
+function transactionEmailsRow(customer) {
+  const enabled = customer.transactionEmailsEnabled;
+  const toggle = async () => {
+    try {
+      state.customer = await api(`/api/customers/${customer.id}/transaction-emails`, {
+        method: "PUT",
+        body: { enabled: !enabled },
+      });
+      state.detailError = null;
+      toast(enabled ? "Transaction emails turned off." : "Transaction emails turned on.");
+    } catch (error) {
+      state.detailError = error.message;
+    }
+    renderDetail();
+  };
+  return el("div", { class: "notify-row" },
+    el("div", {},
+      el("strong", {}, "Transaction emails "),
+      el("span", { class: `badge ${enabled ? "badge-money" : "badge-off"}` }, enabled ? "On" : "Off"),
+      el("p", { class: "muted" }, enabled
+        ? `An email goes to ${customer.email} for every deposit, withdrawal and transfer.`
+        : "No emails are sent when money moves.")),
+    isStaff() ? el("button", { type: "button", onclick: toggle }, enabled ? "Turn off" : "Turn on") : null);
+}
+
 function customerPanel() {
   const { customer, accounts } = state;
   const accountItems = accounts.map((account) => el("li", {},
@@ -332,6 +358,7 @@ function customerPanel() {
         el("button", { type: "button", onclick: () => openCustomerDialog(customer) }, "Edit"),
         el("button", { type: "button", onclick: openSetLoginDialog }, "Set password"),
         el("button", { type: "button", class: "danger", onclick: confirmDeleteCustomer }, "Delete")) : null),
+    transactionEmailsRow(customer),
     el("div", { class: "panel-head spaced-top" },
       el("h3", {}, "Accounts"),
       isStaff() ? el("button", { type: "button", onclick: openAccountDialog }, "New account") : null),

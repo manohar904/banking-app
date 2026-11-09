@@ -113,6 +113,16 @@ timing doesn't reveal it either, and only a hash of the link is stored. Each add
 15 minutes. Changing a password or email cancels an outstanding link. Sessions already signed in are not
 ended by a reset; they expire after 30 minutes unused.
 
+### Transaction emails
+
+Customers get an email for every deposit, withdrawal and transfer, unless staff turn it off on the
+customer's page. Customers can see the setting but not change it. They use the same email account as alerts
+(`.env`); without one, none are sent. Emails show only the last four digits of the account number.
+
+`customer-service` reads the events from Kafka, so email trouble can't affect the transaction itself, and
+emails arrive late if Kafka is down. Failed sends are retried for about an hour, a repeated event doesn't
+send a second email, and turning this on doesn't email anyone about earlier transactions.
+
 ### Availability
 
 A service being down now only affects what needs it. Accounts can still be read if `customer-service`

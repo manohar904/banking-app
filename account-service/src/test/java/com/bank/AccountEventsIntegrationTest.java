@@ -91,6 +91,19 @@ class AccountEventsIntegrationTest {
     }
 
     @Test
+    void moneyEventsSayWhoToTellWithoutTheFullAccountNumber() throws Exception {
+        long account = createAccount();
+        String number = jdbc.queryForObject("select account_number from accounts where id = ?", String.class, account);
+        long customer = jdbc.queryForObject("select customer_id from accounts where id = ?", Long.class, account);
+
+        move(account, "deposit", "1.00").andExpect(status().isOk());
+
+        assertThat(eventsFor(account).get(1))
+                .contains("\"customerId\":" + customer, "\"accountEnding\":\"" + number.substring(8) + "\"")
+                .doesNotContain(number);
+    }
+
+    @Test
     void refusedWithdrawalRecordsNoEvent() throws Exception {
         long account = createAccount();
 

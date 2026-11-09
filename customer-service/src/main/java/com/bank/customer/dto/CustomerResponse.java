@@ -8,6 +8,7 @@ public record CustomerResponse(
         String firstName,
         String lastName,
         String email,
+        boolean transactionEmailsEnabled,
         Instant createdAt,
         Instant updatedAt) {
 
@@ -17,6 +18,7 @@ public record CustomerResponse(
                 customer.getFirstName(),
                 customer.getLastName(),
                 customer.getEmail(),
+                customer.isTransactionEmailsEnabled(),
                 customer.getCreatedAt(),
                 customer.getUpdatedAt());
     }

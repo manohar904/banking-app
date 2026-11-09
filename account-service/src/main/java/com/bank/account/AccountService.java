@@ -113,7 +113,8 @@ public class AccountService {
         transactionRepository.save(
                 new AccountTransaction(saved, type, amount, transferId, other.getAccountNumber()));
         events.record(event, saved.getId(), Map.of("amount", amount, "balanceAfter", saved.getBalance(),
-                "transferId", transferId.toString(), "otherAccountId", other.getId()));
+                "transferId", transferId.toString(), "otherAccountId", other.getId(),
+                "customerId", saved.getCustomerId(), "accountEnding", accountEnding(saved)));
     }
 
     @Transactional(readOnly = true)
@@ -151,8 +152,15 @@ public class AccountService {
         Account saved = accountRepository.saveAndFlush(account);
         transactionRepository.save(new AccountTransaction(saved, type, amount));
         events.record(type == TransactionType.DEPOSIT ? "MONEY_DEPOSITED" : "MONEY_WITHDRAWN", saved.getId(),
-                Map.of("amount", amount, "balanceAfter", saved.getBalance()));
+                Map.of("amount", amount, "balanceAfter", saved.getBalance(),
+                        "customerId", saved.getCustomerId(), "accountEnding", accountEnding(saved)));
         return AccountResponse.from(saved);
+    }
+
+    /** Last four digits only, because events are copied to Kafka and Elasticsearch. */
+    private static String accountEnding(Account account) {
+        String number = account.getAccountNumber();
+        return number.substring(number.length() - 4);
     }
 
     private Account findAccount(Long id) {

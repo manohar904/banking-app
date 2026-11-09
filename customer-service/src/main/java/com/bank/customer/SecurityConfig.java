@@ -17,6 +17,7 @@ class SecurityConfig {
         return ServiceSecurity.build(http, decoder, requests -> requests
                 .requestMatchers(HttpMethod.GET, "/api/customers").hasRole("STAFF")
                 .requestMatchers(HttpMethod.GET, "/api/customers/*").hasAnyRole(ServiceSecurity.PEOPLE)
-                .requestMatchers("/api/customers", "/api/customers/*").hasRole("STAFF"));
+                .requestMatchers("/api/customers", "/api/customers/*", "/api/customers/*/transaction-emails")
+                .hasRole("STAFF"));
     }
 }

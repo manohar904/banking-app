@@ -9,7 +9,10 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>Banking</h1>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">B</span>
+      <h1>Banking</h1>
+    </div>
     <div id="user-menu" class="user-menu" hidden>
       <span id="user-email" class="muted user-email"></span>
       <button id="new-customer" class="primary" type="button" hidden>New customer</button>
@@ -20,8 +23,18 @@
   </header>
 
   <section id="login-view" class="login-view" hidden>
+    <div class="login-hero">
+      <h2>Your money, clearly.</h2>
+      <p>See your balances and every transaction in one place.</p>
+      <ul class="login-points">
+        <li><span class="login-tick" aria-hidden="true">✓</span>Balances and history, always up to date</li>
+        <li><span class="login-tick" aria-hidden="true">✓</span>Sign-in protected against password guessing</li>
+        <li><span class="login-tick" aria-hidden="true">✓</span>Every change to your records is logged</li>
+      </ul>
+    </div>
     <form id="login-form" class="panel login-panel" novalidate>
-      <h2>Sign in</h2>
+      <h2>Welcome back</h2>
+      <p class="muted">Sign in to your account.</p>
       <p class="form-error" data-form-error role="alert" hidden></p>
       <label>Email
         <input name="email" type="email" autocomplete="username" required>

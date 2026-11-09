@@ -87,6 +87,18 @@ transaction, so money is never taken without arriving. Each side gets its own le
 Send an `Idempotency-Key` so that a repeat can't move the money twice. If another request changed one
 of the accounts at the same moment, the answer is a 409 and nothing was applied.
 
+### Audit log
+
+Every change that produces an event also gets an `audit_log` row saying who did it, in the same database
+transaction as the change. Actions that fail leave no row. Staff can read each service's log, newest first,
+at `/api/accounts/audit`, `/api/customers/audit` and `/api/auth/audit`; add `actorUserId=` or `targetId=` to
+filter. Events carry `actorUserId` and `actorRole` too, so Kibana shows all three services together.
+
+Database triggers refuse to change or remove entries, which stops mistakes and application bugs, but
+not someone with full control of the database. When one service calls another, such as `customer-service`
+removing a login when a customer is deleted, the second service records the actor as `SERVICE`; the first
+service's entry says which person started it. Reading records and signing in aren't audited.
+
 ### Availability
 
 A service being down now only affects what needs it. Accounts can still be read if `customer-service`

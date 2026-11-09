@@ -33,6 +33,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -359,6 +360,97 @@ class AccountApiIntegrationTest {
     }
 
     @Test
+    void auditLogSaysWhoDidWhatToWhich() throws Exception {
+        long account = createAccount(newCustomerId());
+        String staffMember = tokens.forUser(77L, "STAFF", null);
+
+        mockMvc.perform(as(staffMember, post("/api/accounts/{id}/deposit", account))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\": 100.10}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(asStaff(get("/api/accounts/audit").param("targetId", String.valueOf(account))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page.totalElements").value(2))
+                .andExpect(jsonPath("$.content[0].action").value("MONEY_DEPOSITED"))
+                .andExpect(jsonPath("$.content[0].actorUserId").value(77))
+                .andExpect(jsonPath("$.content[0].actorRole").value("STAFF"))
+                .andExpect(jsonPath("$.content[0].targetId").value(String.valueOf(account)))
+                .andExpect(jsonPath("$.content[0].details.amount").value(100.10))
+                .andExpect(jsonPath("$.content[0].occurredAt").isNotEmpty())
+                .andExpect(jsonPath("$.content[1].action").value("ACCOUNT_OPENED"));
+    }
+
+    @Test
+    void auditLogCanBeFilteredByWhoDidIt() throws Exception {
+        long staffId = ThreadLocalRandom.current().nextLong(1000, Long.MAX_VALUE);
+        long account = createAccount(newCustomerId());
+        mockMvc.perform(as(tokens.forUser(staffId, "STAFF", null), post("/api/accounts/{id}/deposit", account))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\": 1.00}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(asStaff(get("/api/accounts/audit").param("actorUserId", String.valueOf(staffId))))
+                .andExpect(jsonPath("$.page.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].action").value("MONEY_DEPOSITED"));
+    }
+
+    @Test
+    void aTransferIsAuditedOnBothAccounts() throws Exception {
+        long from = fundedAccount("10.00");
+        long to = fundedAccount("10.00");
+
+        transfer(from, numberOf(to), "1.00").andExpect(status().isOk());
+
+        assertThat(auditActions(from)).first().isEqualTo("TRANSFER_SENT");
+        assertThat(auditActions(to)).first().isEqualTo("TRANSFER_RECEIVED");
+    }
+
+    @Test
+    void anActionThatFailedIsNotAudited() throws Exception {
+        long account = fundedAccount("1.00");
+        List<String> before = auditActions(account);
+
+        move(account, "withdraw", "2.00").andExpect(status().isUnprocessableContent());
+
+        assertThat(auditActions(account)).isEqualTo(before);
+    }
+
+    @Test
+    void eventsSayWhoTheyWereDoneFor() throws Exception {
+        long account = createAccount(newCustomerId());
+        mockMvc.perform(as(tokens.forUser(78L, "STAFF", null), post("/api/accounts/{id}/deposit", account))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\": 1.00}"))
+                .andExpect(status().isOk());
+
+        assertThat(jdbc.queryForObject(
+                "select payload from outbox_events where aggregate_id = ? order by id desc limit 1", String.class,
+                String.valueOf(account))).contains("\"actorUserId\":78", "\"actorRole\":\"STAFF\"");
+    }
+
+    @Test
+    void customerCannotReadTheAuditLog() throws Exception {
+        long ada = newCustomerId();
+        createAccount(ada);
+
+        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/accounts/audit")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void auditLogEntriesCannotBeChangedOrRemoved() throws Exception {
+        long account = createAccount(newCustomerId());
+        String target = String.valueOf(account);
+
+        assertThatThrownBy(() -> jdbc.update("update audit_log set actor_user_id = 1 where target_id = ?", target))
+                .isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(() -> jdbc.update("delete from audit_log where target_id = ?", target))
+                .isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(() -> jdbc.execute("truncate audit_log"))
+                .isInstanceOf(DataAccessException.class);
+
+        assertThat(auditActions(account)).containsExactly("ACCOUNT_OPENED");
+    }
+
+    @Test
     void databaseRejectsANegativeBalanceEvenWithoutTheApplication() throws Exception {
         long account = createAccount(newCustomerId());
 
@@ -644,6 +736,12 @@ class AccountApiIntegrationTest {
                 .header(IdempotencyFilter.KEY_HEADER, key)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"customerId\": " + customerId + ", \"type\": \"CHECKING\"}"));
+    }
+
+    /** Newest first. */
+    private List<String> auditActions(long accountId) {
+        return jdbc.queryForList("select action from audit_log where target_id = ? order by id desc", String.class,
+                String.valueOf(accountId));
     }
 
     private long fundedAccount(String amount) throws Exception {

@@ -317,6 +317,31 @@ class AuthIntegrationTest {
         mockMvc.perform(as(tokens.forThisService(), get("/api/auth/me"))).andExpect(status().isForbidden());
     }
 
+    @Test
+    void auditLogTellsAPersonFromAnotherService() throws Exception {
+        long customer = newCustomerId();
+        newLogin(customer);
+        deleteLogin(customer).andExpect(status().isNoContent());
+
+        mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), get("/api/auth/audit"))
+                        .param("targetId", String.valueOf(customer)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].action").value("LOGIN_REMOVED"))
+                .andExpect(jsonPath("$.content[0].actorRole").value("SERVICE"))
+                .andExpect(jsonPath("$.content[0].actorUserId").doesNotExist())
+                .andExpect(jsonPath("$.content[1].action").value("LOGIN_SET"))
+                .andExpect(jsonPath("$.content[1].actorRole").value("STAFF"))
+                .andExpect(jsonPath("$.content[1].actorUserId").value(0));
+    }
+
+    @Test
+    void customerCannotReadTheAuditLog() throws Exception {
+        long customer = newCustomerId();
+
+        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", customer), get("/api/auth/audit")))
+                .andExpect(status().isForbidden());
+    }
+
     private void useUpAttempts(String email) throws Exception {
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             authenticate(email, "not-the-password").andExpect(status().isUnauthorized());

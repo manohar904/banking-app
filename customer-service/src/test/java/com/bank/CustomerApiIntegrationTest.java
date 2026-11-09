@@ -271,6 +271,29 @@ class CustomerApiIntegrationTest {
         mockMvc.perform(as(tokens.forThisService(), get("/api/customers"))).andExpect(status().isForbidden());
     }
 
+    @Test
+    void auditLogSaysWhoCreatedACustomerAndHoldsNoPersonalDetails() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+
+        String answer = mockMvc.perform(asStaff(get("/api/customers/audit").param("targetId", String.valueOf(customer))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].action").value("CUSTOMER_CREATED"))
+                .andExpect(jsonPath("$.content[0].actorRole").value("STAFF"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(answer).doesNotContain(email);
+    }
+
+    @Test
+    void customerCannotReadTheAuditLog() throws Exception {
+        long ada = createCustomer();
+
+        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/customers/audit")))
+                .andExpect(status().isForbidden());
+    }
+
     private MockHttpServletRequestBuilder asStaff(MockHttpServletRequestBuilder request) {
         return as(tokens.forUser(0L, "STAFF", null), request);
     }

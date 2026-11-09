@@ -39,6 +39,8 @@ management:
         http.server.requests: true
 
 bank:
+  audit:
+    path: /api/auth/audit
   internal:
     # Signs the tokens services use with each other. There is deliberately no default.
     token-secret: ${INTERNAL_TOKEN_SECRET}

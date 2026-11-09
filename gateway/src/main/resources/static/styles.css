@@ -196,6 +196,9 @@ th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: 
 th { color: var(--muted); font-size: 0.85rem; font-weight: 500; }
 .right { text-align: right; }
 .credit { color: var(--positive); }
+td.wrap { min-width: 220px; white-space: normal; overflow-wrap: anywhere; }
+
+.audit-source { max-width: 240px; margin-top: 12px; }
 
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
 .pager:empty { display: none; }

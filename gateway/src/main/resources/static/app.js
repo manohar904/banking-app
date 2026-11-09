@@ -2,6 +2,8 @@
 
 const CUSTOMER_PAGE_SIZE = 20;
 const TRANSACTION_PAGE_SIZE = 10;
+const AUDIT_PAGE_SIZE = 25;
+const AUDIT_SOURCES = { accounts: "Accounts and money", customers: "Customers", auth: "Sign-ins and passwords" };
 // Matches the API: at most 17 whole digits and 2 decimals.
 const AMOUNT_PATTERN = /^\d{1,17}(\.\d{1,2})?$/;
 
@@ -19,6 +21,7 @@ function resetState() {
     transactions: { content: [], page: null },
     transactionPage: 0,
     detailError: null,
+    audit: null,
   });
 }
 
@@ -165,7 +168,30 @@ async function reloadCustomersAfterDelete() {
   }
 }
 
+/** Each service keeps its own log, so one is shown at a time. That also keeps real page numbers. */
+async function openAuditLog(source = "accounts", page = 0) {
+  const version = ++selectionVersion;
+  let audit = { source, entries: { content: [], page: null }, actors: {} };
+  let failure = null;
+  try {
+    const entries = await api(`/api/${source}/audit?page=${page}&size=${AUDIT_PAGE_SIZE}`);
+    const ids = [...new Set(entries.content.map((entry) => entry.actorUserId).filter((id) => id !== null))];
+    const actors = ids.length ? await api(`/api/auth/audit/actors?ids=${ids.join(",")}`) : {};
+    audit = { source, entries, actors };
+  } catch (error) {
+    failure = error.message;
+  }
+  if (version !== selectionVersion) return;
+  state.audit = audit;
+  state.customer = null;
+  state.account = null;
+  state.detailError = failure;
+  renderCustomers();
+  renderDetail();
+}
+
 async function selectCustomer(id) {
+  state.audit = null;
   const version = ++selectionVersion;
   try {
     const [customer, accounts] = await Promise.all([
@@ -243,6 +269,10 @@ function renderCustomers() {
 function renderDetail() {
   const detail = $("detail");
   const error = state.detailError ? el("p", { class: "banner-error", role: "alert" }, state.detailError) : null;
+  if (state.audit) {
+    detail.replaceChildren(...[error, auditPanel()].filter(Boolean));
+    return;
+  }
   if (!state.customer) {
     detail.replaceChildren(...[error, el("div", { class: "panel" },
       el("p", { class: "empty" }, "Select a customer, or create a new one."))].filter(Boolean));
@@ -278,6 +308,50 @@ function customerPanel() {
     accounts.length
       ? el("ul", { class: "account-list" }, ...accountItems)
       : el("p", { class: "empty" }, "This customer has no accounts yet."));
+}
+
+function auditActor(entry, actors) {
+  if (entry.actorUserId === null) return titleCase(entry.actorRole);
+  const who = actors[entry.actorUserId] ?? `User ${entry.actorUserId}`;
+  return `${who} (${entry.actorRole.toLowerCase()})`;
+}
+
+/** For example { balanceAfter: "5.00" } becomes "balance after: 5.00". */
+function auditDetails(details) {
+  return Object.entries(details)
+    .map(([key, value]) => `${key.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`)}: ${value}`)
+    .join(", ");
+}
+
+function auditPanel() {
+  const { source, entries, actors } = state.audit;
+  const select = el("select", { name: "source", "aria-label": "Which log" },
+    ...Object.entries(AUDIT_SOURCES).map(([value, label]) => el("option", { value }, label)));
+  select.value = source;
+  select.onchange = () => openAuditLog(select.value);
+
+  const rows = entries.content.map((entry) => el("tr", {},
+    el("td", {}, dateFormat.format(new Date(entry.occurredAt))),
+    el("td", {}, auditActor(entry, actors)),
+    el("td", {}, titleCase(entry.action.replaceAll("_", " "))),
+    el("td", { class: "number" }, entry.targetId),
+    el("td", { class: "wrap" }, auditDetails(entry.details))));
+
+  return el("div", { class: "panel" },
+    el("h2", {}, "Audit log"),
+    el("p", { class: "muted" }, "Who changed what, newest first."),
+    el("label", { class: "audit-source" }, "Show", select),
+    rows.length
+      ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {},
+            el("th", { scope: "col" }, "Date"),
+            el("th", { scope: "col" }, "Who"),
+            el("th", { scope: "col" }, "Action"),
+            el("th", { scope: "col" }, "Record"),
+            el("th", { scope: "col" }, "Details"))),
+          el("tbody", {}, ...rows)))
+      : el("p", { class: "empty" }, "Nothing recorded here yet."),
+    pager(entries.page, (next) => openAuditLog(source, next)));
 }
 
 function entryLabel(entry) {
@@ -510,6 +584,7 @@ async function showApp(user) {
   $("user-menu").hidden = false;
   $("user-email").textContent = user.email;
   $("new-customer").hidden = !isStaff();
+  $("audit-log").hidden = !isStaff();
   $("sidebar").hidden = !isStaff();
   document.body.classList.toggle("customer-view", !isStaff());
 
@@ -553,6 +628,8 @@ $("login-form").onsubmit = async (event) => {
     submit.disabled = false;
   }
 };
+
+$("audit-log").onclick = () => openAuditLog();
 
 $("sign-out").onclick = async () => {
   try {

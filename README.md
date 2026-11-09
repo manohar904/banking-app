@@ -94,6 +94,9 @@ transaction as the change. Actions that fail leave no row. Staff can read each s
 at `/api/accounts/audit`, `/api/customers/audit` and `/api/auth/audit`; add `actorUserId=` or `targetId=` to
 filter. Events carry `actorUserId` and `actorRole` too, so Kibana shows all three services together.
 
+In the app, staff can use the **Audit log** button, which shows one service's log at a time with email
+addresses instead of user ids.
+
 Database triggers refuse to change or remove entries, which stops mistakes and application bugs, but
 not someone with full control of the database. When one service calls another, such as `customer-service`
 removing a login when a customer is deleted, the second service records the actor as `SERVICE`; the first

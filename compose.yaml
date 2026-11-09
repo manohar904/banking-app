@@ -47,6 +47,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
     mem_limit: 512m
 
   # Gives each service its own database. PostgreSQL's init scripts only run on an empty volume,

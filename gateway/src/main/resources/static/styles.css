@@ -448,16 +448,38 @@ dialog p { overflow-wrap: anywhere; }
 
 .toast {
   position: fixed;
-  right: 16px;
-  bottom: 16px;
-  max-width: calc(100vw - 32px);
-  padding: 11px 16px;
-  border-radius: 12px;
-  background: var(--text);
-  color: var(--bg);
-  box-shadow: var(--shadow-strong);
+  z-index: 10;
+  top: 16px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 14px 20px;
+  border-radius: 14px;
+  color: #ffffff;
+  font-size: 1.05rem;
+  font-weight: 600;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 35%);
+  transform: translateX(-50%);
   /* Clicks pass through, so a message never blocks the button underneath it. */
   pointer-events: none;
+}
+
+/* Fixed colours, so these stay just as readable in dark mode. */
+.toast-success { background: #047857; }
+.toast-error { background: #be123c; }
+
+.toast-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 25%);
+  font-weight: 700;
 }
 
 @media (max-width: 760px) {

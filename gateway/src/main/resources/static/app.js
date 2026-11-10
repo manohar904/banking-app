@@ -203,6 +203,16 @@ function closeAuditLog() {
   renderDetail();
 }
 
+/** Back to the welcome screen. Only staff have one; a customer's own page is all they see. */
+function closeCustomer() {
+  selectionVersion++;
+  state.customer = null;
+  state.account = null;
+  state.detailError = null;
+  renderCustomers();
+  renderDetail();
+}
+
 async function selectCustomer(id) {
   state.findAccount = false;
   state.audit = null;
@@ -448,7 +458,8 @@ function customerPanel() {
       isStaff() ? el("div", { class: "button-row" },
         el("button", { type: "button", onclick: () => openCustomerDialog(customer) }, "Edit"),
         el("button", { type: "button", onclick: openSetLoginDialog }, "Set password"),
-        el("button", { type: "button", class: "danger", onclick: confirmDeleteCustomer }, "Delete")) : null),
+        el("button", { type: "button", class: "danger", onclick: confirmDeleteCustomer }, "Delete"),
+        el("button", { type: "button", onclick: closeCustomer }, "Close")) : null),
     transactionEmailsRow(customer),
     el("div", { class: "panel-head spaced-top" },
       el("h3", {}, "Accounts"),

@@ -341,6 +341,23 @@ body.customer-view .layout { grid-template-columns: minmax(0, 1fr); max-width: 8
 .tile-money { background: var(--positive-soft); color: var(--positive); }
 .tile-audit { background: var(--amber-soft); color: var(--amber); }
 
+/* The tiles are buttons that open each part. These win over the plain button styles below. */
+button.welcome-tile {
+  display: block;
+  width: 100%;
+  border: 0;
+  text-align: left;
+  font-weight: 400;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+button.welcome-tile:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 16px rgb(0 0 0 / 0.12); }
+button.tile-customers:hover:not(:disabled) { background: var(--violet-soft); }
+button.tile-money:hover:not(:disabled) { background: var(--positive-soft); }
+button.tile-audit:hover:not(:disabled) { background: var(--amber-soft); }
+@media (prefers-reduced-motion: reduce) {
+  button.welcome-tile, button.welcome-tile:hover:not(:disabled) { transition: none; transform: none; }
+}
+
 /* ---------- Controls ---------- */
 
 button, input, select { font: inherit; }

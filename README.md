@@ -18,11 +18,24 @@ in its own container.
 docker compose up -d --build
 ```
 
-Then open http://localhost:8080. To create the first staff login, set `BANK_ADMIN_EMAIL` and
-`BANK_ADMIN_PASSWORD` (12 characters or more) first.
+Then open https://localhost:8443 (http://localhost:8080 sends you there). To create the first staff
+login, set `BANK_ADMIN_EMAIL` and `BANK_ADMIN_PASSWORD` (12 characters or more) first.
+
+The certificate comes from the stack's own certificate authority, which your browser does not know,
+so it warns the first time. Either accept the warning for localhost, or trust the authority on this
+computer:
+
+1. Save its certificate: `docker run --rm -v pract_certs:/c alpine cat /c/ca/ca.crt > bank-ca.crt`
+2. Double-click `bank-ca.crt`, choose **Install Certificate**, **Current User**, then **Place all
+   certificates in the following store**, **Trusted Root Certification Authorities**. Edge and
+   Chrome then trust the bank's pages; Firefox has its own list under Settings → Certificates.
+
+Trusting it means your computer accepts anything signed with the authority's key, which only the
+`certs` step holds. Remove it again from **Manage user certificates** (`certmgr.msc`) if you delete
+the stack.
 
 To run a service from the IDE or Gradle instead, start the database, Kafka and Redis with
-`docker compose up -d db-init kafka redis`,
+`docker compose up -d customer-migrate account-migrate auth-migrate kafka redis`,
 then `.\gradlew.bat :customer-service:bootRun`, and likewise for the others.
 
 ## How a request travels
@@ -59,9 +72,10 @@ refused; email still uses the usual public ones. Certificates last about two yea
 the next start once fewer than 30 days are left.
 
 - The services answer only HTTPS. Their health checks and Prometheus use it too.
-- The gateway's main port, which browsers use, is still plain HTTP (see "Before production"). Its
-  public key and metrics are on its private management port (8090), which is HTTPS, and the
-  services fetch the key from there.
+- The gateway serves browsers over HTTPS on 8443; plain HTTP on 8080 only redirects there. Its
+  session cookie is sent over HTTPS only. It sends no HSTS header: for `localhost` that would cover
+  every port, including Kibana and Grafana, which are plain HTTP. Its public key and metrics are on
+  its private management port (8090), also HTTPS, and the services fetch the key from there.
 - To start over with new certificates, remove the volume: `docker compose down` and then
   `docker volume rm pract_certs`.
 - Kafka is encrypted too inside the Docker network (`kafka:9092`). The port published to this
@@ -80,8 +94,8 @@ the next start once fewer than 30 days are left.
   `SPRING_DATA_REDIS_SSL_BUNDLE=internal` and
   `SPRING_SSL_BUNDLE_PEM_INTERNAL_TRUSTSTORE_CERTIFICATE=file:ca.crt`.
 
-So everything that travels between the parts of the bank is encrypted. What is left is the browser's
-connection to the gateway and to Kibana, Grafana and Prometheus, which stay on this computer.
+So everything that travels between the parts of the bank, and between the browser and the bank, is
+encrypted. Kibana, Grafana and Prometheus are still plain HTTP, but only reachable from this computer.
 
 ## What replaced the shared database
 
@@ -349,8 +363,8 @@ working.
 This is set up for local development. Before real use:
 
 - Set your own `DB_PASSWORD`, the six `*_DB_PASSWORD` and `*_DB_OWNER_PASSWORD` values,
-  `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and `SESSION_COOKIE_SECURE=true`, and serve the gateway
-  over HTTPS.
+  `REDIS_PASSWORD` and `GRAFANA_ADMIN_PASSWORD`. Give the gateway a certificate for its real domain
+  name from a public authority, and turn on HSTS there.
 - Set your own passwords for Kafka and Elasticsearch (the `KAFKA_*_PASSWORD`, `ELASTIC_PASSWORD` and
   other values in `.env.example`). Kafka checks who signs in but not what each login may do; adding
   ACLs would stop, for example, Filebeat from reading bank events. Kafka also runs as a single broker,

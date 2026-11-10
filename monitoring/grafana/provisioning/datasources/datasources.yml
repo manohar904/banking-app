@@ -12,6 +12,11 @@ datasources:
     type: elasticsearch
     access: proxy
     url: http://elasticsearch:9200
+    # A login that may only read the logs; see monitoring/setup-elasticsearch.sh.
+    basicAuth: true
+    basicAuthUser: grafana_bank
+    secureJsonData:
+      basicAuthPassword: $ELASTICSEARCH_PASSWORD
     jsonData:
       index: bank-logs-*
       timeField: "@timestamp"

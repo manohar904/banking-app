@@ -186,15 +186,33 @@ docker compose --profile monitoring up -d --build
 | Tool | Address | Sign-in | What it's for |
 |---|---|---|---|
 | Grafana | http://localhost:3000 | `admin` / `admin` | The **Bank health** dashboard: is each service up, traffic, errors, response times |
-| Kibana | http://localhost:5601 | none | Searching logs, events and heartbeats (open **Discover**) |
+| Kibana | http://localhost:5601 | `elastic` / `elastic_dev_password` | Searching logs, events and heartbeats (open **Discover**) |
 | Prometheus | http://localhost:9090 | none | Raw metrics and **Alerts** |
 | Alertmanager | http://localhost:9093 | none | Which alerts are being sent, and silencing them |
-| Elasticsearch | http://localhost:9200 | none | Stores what Kibana searches |
+| Elasticsearch | http://localhost:9200 | `elastic` / `elastic_dev_password` | Stores what Kibana searches |
 | Tempo | through Grafana | | Stores traces: one request followed through every service it touched |
 
 The monitoring tools add about 4 GB of memory, and the logs take some minutes to appear after the first
 start. Without the profile, the bank and Kafka run alone. To use your own Grafana password, set
 `GRAFANA_ADMIN_PASSWORD` before its first start.
+
+Kafka and Elasticsearch ask everyone to sign in, each with a login of its own that can do only its job:
+
+| Login | Signs in to | Used by | May |
+|---|---|---|---|
+| `bank` | Kafka | the four apps | send events and heartbeats; read events (for emails) |
+| `filebeat` | Kafka | Filebeat | send log lines |
+| `logstash` | Kafka | Logstash | read logs, events and heartbeats |
+| `admin` | Kafka | Kafka itself, and its health check | anything |
+| `elastic` | Elasticsearch, Kibana | you, and the setup scripts | anything |
+| `kibana_system` | Elasticsearch | Kibana | what Kibana needs |
+| `logstash_bank` | Elasticsearch | Logstash | create and write only the `bank-*` indices |
+| `grafana_bank` | Elasticsearch | Grafana's "Bank logs" | read only the logs |
+
+Their passwords have local defaults; set your own in `.env` (see `.env.example`), then run
+`docker compose --profile monitoring up -d`. The Elasticsearch passwords must not contain `"` or `\`.
+Kafka checks only who someone is, not what they may do, so the "May" column is how each one is meant
+to be used rather than something Kafka enforces.
 
 **Traces** show where a request's time went. In Grafana, open **Explore**, choose **Traces**, and search,
 for example for slow requests (`{duration > 500ms}`) or failed ones (`{status = error}`). A trace shows
@@ -299,9 +317,10 @@ This is set up for local development. Before real use:
 - Set your own `DB_PASSWORD`, the six `*_DB_PASSWORD` and `*_DB_OWNER_PASSWORD` values,
   `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and `SESSION_COOKIE_SECURE=true`, and serve the gateway
   over HTTPS.
-- Turn on security in Elasticsearch, Kibana and Kafka. They have no passwords here, and are only safe
-  because they are published to this computer alone. Kafka also runs as a single broker, so it has no
-  second copy of anything.
+- Set your own passwords for Kafka and Elasticsearch (the `KAFKA_*_PASSWORD`, `ELASTIC_PASSWORD` and
+  other values in `.env.example`). Kafka checks who signs in but not what each login may do; adding
+  ACLs would stop, for example, Filebeat from reading bank events. Kafka also runs as a single broker,
+  so it has no second copy of anything.
 - Add TLS between services: passwords travel from the gateway to `auth-service` over plain HTTP, which
   is only as private as the Docker network. The public keys for internal tokens are fetched the same
   way, so someone able to tamper with that network could swap in their own.

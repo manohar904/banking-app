@@ -50,6 +50,10 @@ public class AccountTransaction {
     @Column(updatable = false)
     private UUID transferId;
 
+    /** True for a transfer the customer sent themselves, which counts towards their daily limit. */
+    @Column(nullable = false, updatable = false)
+    private boolean byCustomer;
+
     /** The other account in a transfer. Empty for deposits and withdrawals. */
     @Column(updatable = false, length = 12)
     private String counterpartyAccountNumber;
@@ -60,10 +64,11 @@ public class AccountTransaction {
 
     /** One side of a transfer. As with the constructor below, call after the balance has changed. */
     public AccountTransaction(Account account, TransactionType type, BigDecimal amount, UUID transferId,
-            String counterpartyAccountNumber) {
+            String counterpartyAccountNumber, boolean byCustomer) {
         this(account, type, amount);
         this.transferId = transferId;
         this.counterpartyAccountNumber = counterpartyAccountNumber;
+        this.byCustomer = byCustomer;
     }
 
     /** Call after the balance has changed, so that balanceAfter captures the new balance. */

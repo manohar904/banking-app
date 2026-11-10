@@ -56,7 +56,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  */
 @SpringBootTest(properties = {
         "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
-        "bank.kafka.enabled=false"
+        "bank.kafka.enabled=false",
+        "bank.transfers.customer-daily-limit=100.00"
 })
 @AutoConfigureMockMvc
 @Testcontainers
@@ -277,18 +278,105 @@ class AccountApiIntegrationTest {
     }
 
     @Test
-    void customerCannotTransfer() throws Exception {
+    void customerCanTransferFromTheirOwnAccount() throws Exception {
         long ada = newCustomerId();
         long from = createAccount(ada);
         move(from, "deposit", "10.00").andExpect(status().isOk());
         long to = fundedAccount("1.00");
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), post("/api/accounts/{id}/transfer", from))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"toAccountNumber\": \"" + numberOf(to) + "\", \"amount\": 1.00}"))
-                .andExpect(status().isForbidden());
+        customerTransfer(ada, from, numberOf(to), "4.00")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balance").value(6.00));
 
-        assertThat(balance(from)).isEqualByComparingTo("10.00");
+        assertThat(balance(to)).isEqualByComparingTo("5.00");
+        assertThat(jdbc.queryForObject("select by_customer from account_transactions where account_id = ?"
+                + " and type = 'TRANSFER_OUT'", Boolean.class, from)).isTrue();
+    }
+
+    @Test
+    void customerCannotTransferFromSomeoneElsesAccount() throws Exception {
+        long ada = newCustomerId();
+        createAccount(ada);
+        long someoneElses = fundedAccount("10.00");
+        long to = fundedAccount("1.00");
+
+        customerTransfer(ada, someoneElses, numberOf(to), "1.00").andExpect(status().isForbidden());
+        customerTransfer(ada, Long.MAX_VALUE, numberOf(to), "1.00").andExpect(status().isForbidden());
+
+        assertThat(balance(someoneElses)).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void customerTransfersStopAtTheDailyLimitOverAllTheirAccounts() throws Exception {
+        long ada = newCustomerId();
+        long checking = createAccount(ada);
+        long savings = createAccount(ada);
+        move(checking, "deposit", "500.00").andExpect(status().isOk());
+        move(savings, "deposit", "500.00").andExpect(status().isOk());
+        long to = fundedAccount("1.00");
+
+        customerTransfer(ada, checking, numberOf(to), "60.00").andExpect(status().isOk());
+        customerTransfer(ada, savings, numberOf(to), "40.01")
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("40.00")));
+        customerTransfer(ada, savings, numberOf(to), "40.00").andExpect(status().isOk());
+        customerTransfer(ada, checking, numberOf(to), "0.01")
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("tomorrow")));
+
+        assertThat(balance(checking)).isEqualByComparingTo("440.00");
+        assertThat(balance(savings)).isEqualByComparingTo("460.00");
+    }
+
+    @Test
+    void staffTransfersHaveNoLimitAndDoNotUseTheCustomersAllowance() throws Exception {
+        long ada = newCustomerId();
+        long from = createAccount(ada);
+        move(from, "deposit", "500.00").andExpect(status().isOk());
+        long to = fundedAccount("1.00");
+
+        transfer(from, numberOf(to), "300.00").andExpect(status().isOk());
+
+        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/accounts/{id}/transfer-allowance", from)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyLimit").value(100.00))
+                .andExpect(jsonPath("$.sentToday").value(0))
+                .andExpect(jsonPath("$.remainingToday").value(100.00));
+        customerTransfer(ada, from, numberOf(to), "100.00").andExpect(status().isOk());
+        mockMvc.perform(asStaff(get("/api/accounts/{id}/transfer-allowance", from)))
+                .andExpect(jsonPath("$.sentToday").value(100.00))
+                .andExpect(jsonPath("$.remainingToday").value(0));
+    }
+
+    @Test
+    void customerCannotSeeSomeoneElsesAllowance() throws Exception {
+        long ada = newCustomerId();
+        createAccount(ada);
+        long someoneElses = fundedAccount("1.00");
+
+        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada),
+                        get("/api/accounts/{id}/transfer-allowance", someoneElses)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void simultaneousCustomerTransfersCannotTogetherPassTheLimit() throws Exception {
+        long ada = newCustomerId();
+        long from = createAccount(ada);
+        move(from, "deposit", "500.00").andExpect(status().isOk());
+        String to = numberOf(fundedAccount("1.00"));
+
+        List<Callable<Integer>> requests = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            requests.add(() -> customerTransfer(ada, from, to, "30.00").andReturn().getResponse().getStatus());
+        }
+        List<Integer> statuses = runSimultaneously(requests);
+
+        // 3 x 30.00 fit under 100.00. The rest are refused or lost the race for the row and changed nothing.
+        assertThat(Collections.frequency(statuses, 200)).isLessThanOrEqualTo(3);
+        assertThat(balance(from)).isGreaterThanOrEqualTo(new BigDecimal("410.00"));
+        assertThat(balance(from).add(new BigDecimal(Collections.frequency(statuses, 200) * 30)))
+                .isEqualByComparingTo("500.00");
     }
 
     @Test
@@ -752,6 +840,13 @@ class AccountApiIntegrationTest {
 
     private String numberOf(long accountId) {
         return jdbc.queryForObject("select account_number from accounts where id = ?", String.class, accountId);
+    }
+
+    private ResultActions customerTransfer(long customerId, long fromId, String toNumber, String amount)
+            throws Exception {
+        return mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", customerId), post("/api/accounts/{id}/transfer", fromId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"toAccountNumber\": \"" + toNumber + "\", \"amount\": " + amount + "}"));
     }
 
     private ResultActions transfer(long fromId, String toNumber, String amount) throws Exception {

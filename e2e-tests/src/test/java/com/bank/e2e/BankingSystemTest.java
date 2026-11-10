@@ -224,6 +224,25 @@ class BankingSystemTest {
     }
 
     @Test
+    void customerCanSendATransferFromTheirOwnAccountOnly() throws Exception {
+        Holder ada = holder();
+        Holder grace = holder();
+        Browser session = signedIn(ada.email(), PASSWORD);
+        String graceNumber = staff.get("/api/accounts/" + grace.accountId()).read("$.accountNumber");
+        String body = "{\"toAccountNumber\": \"" + graceNumber + "\", \"amount\": 15.00}";
+
+        Browser.Response sent = session.post("/api/accounts/" + ada.accountId() + "/transfer", body);
+        Browser.Response notTheirs = session.post("/api/accounts/" + grace.accountId() + "/transfer", body);
+
+        assertThat(sent.status()).isEqualTo(200);
+        assertThat(sent.<Number>read("$.balance").doubleValue()).isEqualTo(35.0);
+        assertThat(notTheirs.status()).isEqualTo(403);
+        Browser.Response allowance = session.get("/api/accounts/" + ada.accountId() + "/transfer-allowance");
+        assertThat(allowance.<Number>read("$.sentToday").doubleValue()).isEqualTo(15.0);
+        assertThat(staff.get("/api/accounts/" + grace.accountId()).<Number>read("$.balance").doubleValue()).isEqualTo(65.0);
+    }
+
+    @Test
     void staffActionsReachTheAuditLogThroughTheGateway() throws Exception {
         Holder ada = holder();
 

@@ -15,6 +15,11 @@ class AccountExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage());
     }
 
+    @ExceptionHandler(TransferLimitExceededException.class)
+    ProblemDetail handleTransferLimit(TransferLimitExceededException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage());
+    }
+
     /** Two requests changed the same account at once. The losing request was rolled back. */
     @ExceptionHandler(OptimisticLockingFailureException.class)
     ProblemDetail handleOptimisticLock(OptimisticLockingFailureException ex) {

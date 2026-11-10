@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.bank.account.CustomerServiceClient;
 import com.bank.common.events.OutboxRelay;
 import com.bank.common.security.InternalTokens;
+import com.bank.common.security.TestGateway;
 import com.jayway.jsonpath.JsonPath;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -32,6 +33,8 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.KafkaException;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -41,7 +44,6 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /** What must hold between a change and its event. e2e-tests covers delivery through a real Kafka. */
 @SpringBootTest(properties = {
-        "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
         // The background jobs stay out of the way: these tests run the relay themselves.
         "bank.events.relay-delay=3600000",
         "bank.health.heartbeat-interval=3600000"
@@ -53,6 +55,14 @@ class AccountEventsIntegrationTest {
     @Container
     @ServiceConnection
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
+
+    /** Signs tokens for people, as the real gateway does. */
+    static TestGateway gateway = TestGateway.start();
+
+    @DynamicPropertySource
+    static void trustTheTestGateway(DynamicPropertyRegistry registry) {
+        gateway.register(registry);
+    }
 
     @Autowired
     private MockMvc mockMvc;
@@ -176,7 +186,7 @@ class AccountEventsIntegrationTest {
     }
 
     private String staffToken() {
-        return "Bearer " + tokens.forUser(0L, "STAFF", null);
+        return "Bearer " + gateway.forUser(0L, "STAFF", null);
     }
 
     private long createAccount() throws Exception {

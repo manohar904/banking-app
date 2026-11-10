@@ -3,6 +3,3 @@ spring:
   datasource:
     password: ${DB_PASSWORD:auth_dev_db_password}
 
-bank:
-  internal:
-    token-secret: ${INTERNAL_TOKEN_SECRET:bank_dev_internal_token_secret_local_only}

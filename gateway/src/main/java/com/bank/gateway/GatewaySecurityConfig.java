@@ -1,9 +1,11 @@
 package com.bank.gateway;
 
+import com.bank.common.security.InternalTokens;
 import com.bank.common.security.Problems;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import com.bank.common.security.InternalTokens;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.LockedException;
@@ -32,6 +34,8 @@ public class GatewaySecurityConfig {
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers("/", "/index.html", "/app.js", "/styles.css", "/favicon.ico", "/error")
                         .permitAll()
+                        // The services fetch this to check the gateway's tokens. Public keys are safe to show.
+                        .requestMatchers(HttpMethod.GET, InternalTokens.PUBLIC_KEYS_PATH).permitAll()
                         // Only served on the private management port. On the main port these are a 404.
                         .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
                         // For people who cannot sign in. Every other API call needs a session.

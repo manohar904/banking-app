@@ -41,7 +41,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
-                "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
                 "bank.kafka.enabled=false",
                 "management.server.port=0",
                 "spring.data.redis.password="
@@ -131,6 +130,14 @@ class GatewayTest {
         assertThat(auth.lastBody.get()).contains("ada@example.com");
         Jwt token = tokens.decoder().decode(auth.lastAuthorization.get().substring("Bearer ".length()));
         assertThat(token.getClaimAsString("role")).isEqualTo("SERVICE");
+    }
+
+    @Test
+    void theGatewayPublishesOnlyThePublicHalfOfItsSigningKey() throws Exception {
+        HttpResponse<String> response = browser.get(InternalTokens.PUBLIC_KEYS_PATH);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"kty\":\"EC\"", "\"x\":", "\"y\":").doesNotContain("\"d\":");
     }
 
     @Test

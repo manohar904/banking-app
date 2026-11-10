@@ -1,7 +1,4 @@
 # Used by .\gradlew.bat :gateway:bootRun.
-bank:
-  internal:
-    token-secret: ${INTERNAL_TOKEN_SECRET:bank_dev_internal_token_secret_local_only}
 spring:
   data:
     redis:

@@ -1,5 +1,7 @@
 plugins {
     `java-library`
+    // TestGateway, which other modules' tests use to make tokens the way the gateway does.
+    `java-test-fixtures`
 }
 
 description = "Code every service shares: internal tokens, security rules and error responses"
@@ -20,6 +22,8 @@ dependencies {
     api("io.micrometer:micrometer-registry-prometheus")
     // Traces requests across the services and sends them to Tempo over OTLP.
     api("org.springframework.boot:spring-boot-starter-opentelemetry")
+
+    testFixturesApi("org.springframework:spring-test")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }

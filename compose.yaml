@@ -15,7 +15,8 @@ x-service-env: &service-env
   DB_HOST: postgres
   DB_PORT: 5432
   # Each service signs in to PostgreSQL with its own login; see db-init.
-  INTERNAL_TOKEN_SECRET: ${INTERNAL_TOKEN_SECRET:-bank_dev_internal_token_secret_local_only}
+  # Where the gateway publishes the public key the services check its tokens with.
+  GATEWAY_URL: http://gateway:8080
   CUSTOMER_SERVICE_URL: http://customer-service:8081
   ACCOUNT_SERVICE_URL: http://account-service:8082
   AUTH_SERVICE_URL: http://auth-service:8083
@@ -245,7 +246,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      INTERNAL_TOKEN_SECRET: ${INTERNAL_TOKEN_SECRET:-bank_dev_internal_token_secret_local_only}
+      GATEWAY_URL: http://gateway:8080
       CUSTOMER_SERVICE_URL: http://customer-service:8081
       ACCOUNT_SERVICE_URL: http://account-service:8082
       AUTH_SERVICE_URL: http://auth-service:8083

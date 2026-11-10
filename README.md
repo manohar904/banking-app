@@ -259,8 +259,10 @@ Kafka and Elasticsearch ask everyone to sign in, each with a login of its own th
 
 Their passwords have local defaults; set your own in `.env` (see `.env.example`), then run
 `docker compose --profile monitoring up -d`. The Elasticsearch passwords must not contain `"` or `\`.
-Kafka checks only who someone is, not what they may do, so the "May" column is how each one is meant
-to be used rather than something Kafka enforces.
+Both enforce the "May" column. For Kafka, `kafka-setup` writes the rules (`kafka/setup-acls.sh`) on
+every start, and Kafka refuses anything they do not allow: Filebeat cannot read bank events, Logstash
+cannot write anything, and the apps cannot read the logs. The four apps share the `bank` login, so
+each of them may also read events, which only customer-service does (for transaction emails).
 
 **Traces** show where a request's time went. In Grafana, open **Explore**, choose **Traces**, and search,
 for example for slow requests (`{duration > 500ms}`) or failed ones (`{status = error}`). A trace shows
@@ -366,9 +368,8 @@ This is set up for local development. Before real use:
   `REDIS_PASSWORD` and `GRAFANA_ADMIN_PASSWORD`. Give the gateway a certificate for its real domain
   name from a public authority, and turn on HSTS there.
 - Set your own passwords for Kafka and Elasticsearch (the `KAFKA_*_PASSWORD`, `ELASTIC_PASSWORD` and
-  other values in `.env.example`). Kafka checks who signs in but not what each login may do; adding
-  ACLs would stop, for example, Filebeat from reading bank events. Kafka also runs as a single broker,
-  so it has no second copy of anything.
+  other values in `.env.example`). Kafka also runs as a single broker, so it has no second copy of
+  anything.
 
 ## Tests
 

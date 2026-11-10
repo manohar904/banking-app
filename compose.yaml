@@ -14,8 +14,7 @@ x-service: &service
 x-service-env: &service-env
   DB_HOST: postgres
   DB_PORT: 5432
-  DB_USERNAME: ${DB_USERNAME:-bank}
-  DB_PASSWORD: ${DB_PASSWORD:-bank_dev_password}
+  # Each service signs in to PostgreSQL with its own login; see db-init.
   INTERNAL_TOKEN_SECRET: ${INTERNAL_TOKEN_SECRET:-bank_dev_internal_token_secret_local_only}
   CUSTOMER_SERVICE_URL: http://customer-service:8081
   ACCOUNT_SERVICE_URL: http://account-service:8082
@@ -52,8 +51,8 @@ services:
     restart: unless-stopped
     mem_limit: 512m
 
-  # Gives each service its own database. PostgreSQL's init scripts only run on an empty volume,
-  # so this runs on every start and creates only what is missing.
+  # Gives each service its own database and its own login, which can use no other database. Runs on
+  # every start, so changing a password in .env takes effect at the next `up`. See db-init/db-init.sh.
   db-init:
     image: postgres:18-alpine
     depends_on:
@@ -64,13 +63,12 @@ services:
       PGUSER: ${DB_USERNAME:-bank}
       PGPASSWORD: ${DB_PASSWORD:-bank_dev_password}
       PGDATABASE: postgres
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        for db in bank_customers bank_accounts bank_auth; do
-          psql -v ON_ERROR_STOP=1 -tAc "select 1 from pg_database where datname = '$$db'" | grep -q 1 \
-            || psql -v ON_ERROR_STOP=1 -c "create database $$db"
-        done
+      CUSTOMER_DB_PASSWORD: ${CUSTOMER_DB_PASSWORD:-customer_dev_db_password}
+      ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD:-account_dev_db_password}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-auth_dev_db_password}
+    entrypoint: ["sh", "/db-init.sh"]
+    volumes:
+      - ./db-init/db-init.sh:/db-init.sh:ro
 
   # Backs up every database daily and test-restores each backup. See README.md, "Backups".
   # Backups go to a folder on this computer, not a Docker volume, so `down -v` cannot remove them.
@@ -168,6 +166,8 @@ services:
     environment:
       <<: *service-env
       DB_NAME: bank_customers
+      DB_USERNAME: customer_service
+      DB_PASSWORD: ${CUSTOMER_DB_PASSWORD:-customer_dev_db_password}
       # Transaction emails use the same account as alert emails. Without one, none are sent.
       MAIL_HOST: ${PASSWORD_RESET_SMTP_HOST:-smtp.gmail.com}
       MAIL_PORT: ${PASSWORD_RESET_SMTP_PORT:-587}
@@ -192,6 +192,8 @@ services:
       DB_NAME: bank_accounts
       CUSTOMER_DAILY_TRANSFER_LIMIT: ${CUSTOMER_DAILY_TRANSFER_LIMIT:-1000.00}
       TRANSFER_LIMIT_TIMEZONE: ${TRANSFER_LIMIT_TIMEZONE:-UTC}
+      DB_USERNAME: account_service
+      DB_PASSWORD: ${ACCOUNT_DB_PASSWORD:-account_dev_db_password}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8082/actuator/health"]
       interval: 10s
@@ -208,6 +210,8 @@ services:
     environment:
       <<: *service-env
       DB_NAME: bank_auth
+      DB_USERNAME: auth_service
+      DB_PASSWORD: ${AUTH_DB_PASSWORD:-auth_dev_db_password}
       # Only used to create the first staff login, when none exists yet.
       BANK_ADMIN_EMAIL: ${BANK_ADMIN_EMAIL:-}
       BANK_ADMIN_PASSWORD: ${BANK_ADMIN_PASSWORD:-}

@@ -221,6 +221,17 @@ them but has stopped working shows up later, as `EventsNotReachingKafka`.
 You get one email per problem and service, a reminder every 4 hours while it lasts, and another when it
 has gone away. Going on holiday or doing maintenance? Silence alerts at http://localhost:9093.
 
+## Database logins
+
+Each service signs in to PostgreSQL with its own login (`customer_service`, `account_service`,
+`auth_service`), which owns that service's database and cannot connect to any other. The main user
+(`DB_USERNAME`, `bank` by default) is used only by `db-init` and the backups.
+
+`db-init` sets this up on every start, so `up` brings an older database up to date by itself: it creates
+the logins, sets their passwords from `.env`, and hands each service the tables the main user created
+before. To change a password, set it in `.env` and run `docker compose up -d`. Restoring a backup runs
+`db-init` again before the services start.
+
 ## Backups
 
 The `backup` container backs up every database once a day, into the `backups` folder next to this file
@@ -250,15 +261,17 @@ working.
 
 This is set up for local development. Before real use:
 
-- Set your own `INTERNAL_TOKEN_SECRET`, `DB_PASSWORD`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and
-  `SESSION_COOKIE_SECURE=true`, and serve the gateway over HTTPS.
+- Set your own `INTERNAL_TOKEN_SECRET`, `DB_PASSWORD`, `CUSTOMER_DB_PASSWORD`, `ACCOUNT_DB_PASSWORD`,
+  `AUTH_DB_PASSWORD`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and `SESSION_COOKIE_SECURE=true`, and
+  serve the gateway over HTTPS.
 - Turn on security in Elasticsearch, Kibana and Kafka. They have no passwords here, and are only safe
   because they are published to this computer alone. Kafka also runs as a single broker, so it has no
   second copy of anything.
 - Add TLS between services: passwords travel from the gateway to `auth-service` over plain HTTP, which
   is only as private as the Docker network.
-- Give each service its own database user. They currently share one, so only convention keeps a
-  service out of another's database.
+- Each service owns its own tables, so a compromised service could still turn off its audit log's
+  protection against changes. A separate login for migrations, with the service itself only allowed
+  to read and write rows, would close that.
 - Any service holding the shared secret can issue a token for anyone. Signing with a private key held
   only by the gateway would limit the damage if one service is compromised.
 

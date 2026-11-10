@@ -50,6 +50,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(properties = {
         "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
         "bank.kafka.enabled=false",
+        "bank.sign-in.max-failures-per-address=" + AuthIntegrationTest.MAX_FAILURES_PER_ADDRESS,
         "bank.password-reset.from=bank@example.com",
         "bank.password-reset.base-url=https://bank.example",
         "bank.admin.email=Boss@Example.com",
@@ -63,6 +64,7 @@ class AuthIntegrationTest {
     private static final String STAFF_EMAIL = "boss@example.com";
     private static final String PASSWORD = "customer-password";
     private static final int MAX_ATTEMPTS = 5;
+    static final int MAX_FAILURES_PER_ADDRESS = 8;
 
     /** Same image as compose.yaml. */
     @Container
@@ -192,6 +194,54 @@ class AuthIntegrationTest {
         useUpAttempts(limited);
 
         authenticate(other, PASSWORD).andExpect(status().isOk());
+    }
+
+    @Test
+    void oneAddressFailingOnManyEmailsIsStopped() throws Exception {
+        String address = newAddress();
+        for (int attempt = 1; attempt <= MAX_FAILURES_PER_ADDRESS; attempt++) {
+            authenticateFrom(address, uniqueEmail(), "not-the-password").andExpect(status().isUnauthorized());
+        }
+        String email = newLogin(newCustomerId());
+
+        authenticateFrom(address, email, PASSWORD).andExpect(status().isTooManyRequests());
+
+        // The refused attempt was not counted against the email, and other addresses are not affected.
+        authenticateFrom(newAddress(), email, PASSWORD).andExpect(status().isOk());
+    }
+
+    @Test
+    void successfulSignInsFromOneAddressAreNotLimited() throws Exception {
+        String address = newAddress();
+        String email = newLogin(newCustomerId());
+
+        for (int attempt = 1; attempt <= MAX_FAILURES_PER_ADDRESS + 2; attempt++) {
+            authenticateFrom(address, email, PASSWORD).andExpect(status().isOk());
+        }
+        authenticateFrom(address, uniqueEmail(), "not-the-password").andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aRightPasswordDoesNotWipeOutEarlierFailuresFromTheAddress() throws Exception {
+        String address = newAddress();
+        String email = newLogin(newCustomerId());
+        for (int attempt = 1; attempt <= MAX_FAILURES_PER_ADDRESS; attempt++) {
+            authenticateFrom(address, uniqueEmail(), "not-the-password").andExpect(status().isUnauthorized());
+            if (attempt < MAX_FAILURES_PER_ADDRESS) {
+                authenticateFrom(address, email, PASSWORD).andExpect(status().isOk());
+            }
+        }
+
+        authenticateFrom(address, uniqueEmail(), "not-the-password").andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void addressesAreNotStoredWithTheAttempts() throws Exception {
+        String address = newAddress();
+        authenticateFrom(address, uniqueEmail(), "not-the-password");
+
+        assertThat(jdbc.queryForList("select email_hash from sign_in_attempts", String.class))
+                .noneMatch(hash -> hash.contains(address));
     }
 
     @Test
@@ -570,6 +620,19 @@ class AuthIntegrationTest {
         return mockMvc.perform(as(tokens.forThisService(), post("/internal/authentications"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"email\": \"" + email + "\", \"password\": \"" + password + "\"}"));
+    }
+
+    private ResultActions authenticateFrom(String address, String email, String password) throws Exception {
+        return mockMvc.perform(as(tokens.forThisService(), post("/internal/authentications"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\": \"" + email + "\", \"password\": \"" + password
+                        + "\", \"clientAddress\": \"" + address + "\"}"));
+    }
+
+    /** A different made-up address for each test, so tests do not use up each other's limit. */
+    private static String newAddress() {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        return "10." + random.nextInt(256) + "." + random.nextInt(256) + "." + random.nextInt(1, 255);
     }
 
     private ResultActions setLogin(long customer, String password) throws Exception {

@@ -150,10 +150,22 @@ is checked, even a correct one, until the window ends. Signing in successfully o
 password clears the count. Emails with no account are limited the same way, so the limit doesn't reveal
 who has one, and only a hash of the email is stored.
 
-The limit is per email, so someone who knows an address can keep that person out for 15 minutes at a
-time, and one source trying a few guesses against many emails isn't slowed. `ManyFailedSignIns` still
-catches both. Limiting by address as well needs the gateway to know the caller's real IP, which depends
-on what sits in front of it in production.
+Each browser address also gets 20 failed sign-ins in 15 minutes, over all emails, so one source trying
+a few guesses against many emails is stopped too. Only failures count: many people signing in from one
+office are not limited, and a correct password does not wipe out earlier failures. An attempt refused
+for its address is not counted against the email. Set `SIGN_IN_MAX_FAILURES_PER_ADDRESS` in `.env` to
+change the 20. Only a hash of the address is stored.
+
+Limits on both still have gaps. Someone who knows an email can keep that person out for 15 minutes at
+a time, and anyone sharing an address with an attacker is stopped with them. `ManyFailedSignIns` still
+catches both. The gateway uses the address the connection comes from:
+
+- Here, Docker may show every browser as coming from one address on its own network, so the address
+  limit can apply to all browsers together.
+- Behind a proxy or load balancer in production, every browser comes from the proxy. Set
+  `GATEWAY_FORWARD_HEADERS=native` so the gateway reads `X-Forwarded-For` instead, but only when that
+  proxy is the only way in, because anyone reaching the gateway directly could send that header and
+  pick their own address.
 
 ## Events and monitoring
 

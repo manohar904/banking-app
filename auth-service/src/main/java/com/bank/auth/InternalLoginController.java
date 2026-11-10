@@ -36,6 +36,11 @@ public class InternalLoginController {
     /** Checks a password for the gateway, which then holds the session. */
     @PostMapping("/authentications")
     public VerifiedUserResponse authenticate(@RequestBody CredentialsRequest request) {
+        // The address first: an attempt it refuses is not counted against the email.
+        if (!signInLimiter.allowAttemptFrom(request.clientAddress())) {
+            metrics.counter("bank.signins", "outcome", "limited-address").increment();
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many sign-in attempts.");
+        }
         if (!signInLimiter.allowAttempt(request.email())) {
             metrics.counter("bank.signins", "outcome", "limited").increment();
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many sign-in attempts.");
@@ -45,6 +50,7 @@ public class InternalLoginController {
                             UsernamePasswordAuthenticationToken.unauthenticated(request.email(), request.password()))
                     .getPrincipal();
             signInLimiter.clear(request.email());
+            signInLimiter.forgiveAttemptFrom(request.clientAddress());
             metrics.counter("bank.signins", "outcome", "success").increment();
             return VerifiedUserResponse.from(user);
         } catch (AuthenticationException e) {

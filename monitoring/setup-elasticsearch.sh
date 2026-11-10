@@ -4,7 +4,7 @@
 #
 #   kibana_system   Kibana's own login (built in; only its password is set here)
 #   logstash_bank   may only create and write the bank-* indices
-#   grafana_bank    may only read the bank-logs-* indices
+#   grafana_bank    may only read the bank-logs-* indices (and see basic cluster details)
 #
 # People sign in to Kibana as "elastic". The passwords must not contain " or \.
 set -eu
@@ -27,6 +27,7 @@ es -X PUT "$ES/_security/user/logstash_bank" -d "{\"password\": \"$LOGSTASH_ES_P
 
 echo "Creating the Grafana login, which may only read the logs"
 es -X PUT "$ES/_security/role/bank_logs_reader" -d '{
+  "cluster": ["monitor"],
   "indices": [{"names": ["bank-logs-*"], "privileges": ["read", "view_index_metadata"]}]
 }'
 es -X PUT "$ES/_security/user/grafana_bank" -d "{\"password\": \"$GRAFANA_ES_PASSWORD\", \"roles\": [\"bank_logs_reader\"]}"

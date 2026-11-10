@@ -12,7 +12,17 @@ x-service: &service
     # Filebeat only collects logs from containers that carry this label.
     co.elastic.logs/enabled: "true"
 
+# How the bank's apps sign in to Kafka. The tests use a Kafka without sign-in, so this lives here.
+x-kafka-client: &kafka-client
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  SPRING_KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT
+  SPRING_KAFKA_PROPERTIES_SASL_MECHANISM: PLAIN
+  SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG: >-
+    org.apache.kafka.common.security.plain.PlainLoginModule required
+    username="bank" password="${KAFKA_BANK_PASSWORD:-kafka_dev_bank_password}";
+
 x-service-env: &service-env
+  <<: *kafka-client
   DB_HOST: postgres
   DB_PORT: 5432
   # Migrations run in the *-migrate steps, with a login the services do not have.
@@ -23,7 +33,6 @@ x-service-env: &service-env
   CUSTOMER_SERVICE_URL: http://customer-service:8081
   ACCOUNT_SERVICE_URL: http://account-service:8082
   AUTH_SERVICE_URL: http://auth-service:8083
-  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   # One JSON object per log line, which is what Elasticsearch needs.
   LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
   # Where traces go: Tempo, which runs with the monitoring profile. Without it they are dropped.
@@ -187,10 +196,24 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      # The controller listens inside this container only. Everyone else must sign in (SASL/PLAIN).
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://localhost:9093,EXTERNAL://:9094
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT:-9094}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:SASL_PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      # Who may sign in. "admin" is the broker itself; the rest are the bank's apps, Filebeat and Logstash.
+      KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG: &kafka-users >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="admin" password="${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}"
+        user_admin="${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}"
+        user_bank="${KAFKA_BANK_PASSWORD:-kafka_dev_bank_password}"
+        user_filebeat="${KAFKA_FILEBEAT_PASSWORD:-kafka_dev_filebeat_password}"
+        user_logstash="${KAFKA_LOGSTASH_PASSWORD:-kafka_dev_logstash_password}";
+      KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG: *kafka-users
+      # For the health check below. Not KAFKA_*, which the image would copy into Kafka's own settings.
+      HEALTHCHECK_PASSWORD: ${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}
       # One broker, so nothing can have more than one copy.
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -202,7 +225,11 @@ services:
     volumes:
       - kafka-data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null"]
+      test:
+        - CMD-SHELL
+        - >-
+          printf 'security.protocol=SASL_PLAINTEXT\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="%s";\n' "$$HEALTHCHECK_PASSWORD" > /tmp/healthcheck.properties
+          && /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 --command-config /tmp/healthcheck.properties > /dev/null
       interval: 10s
       timeout: 10s
       retries: 12
@@ -304,11 +331,11 @@ services:
       redis:
         condition: service_healthy
     environment:
+      <<: *kafka-client
       GATEWAY_URL: http://gateway:8080
       CUSTOMER_SERVICE_URL: http://customer-service:8081
       ACCOUNT_SERVICE_URL: http://account-service:8082
       AUTH_SERVICE_URL: http://auth-service:8083
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
       MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: ${TRACING_ENDPOINT:-http://tempo:4318/v1/traces}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
@@ -333,14 +360,18 @@ services:
     profiles: [monitoring]
     environment:
       discovery.type: single-node
-      xpack.security.enabled: "false"
+      # Everyone must sign in. Not encrypted yet; see README.md, "Before production".
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.transport.ssl.enabled: "false"
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-elastic_dev_password}
       ES_JAVA_OPTS: -Xms768m -Xmx768m
     ports:
       - "127.0.0.1:${ELASTICSEARCH_PORT:-9200}:9200"
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health > /dev/null"]
+      test: ["CMD-SHELL", "curl -fs -u \"elastic:$$ELASTIC_PASSWORD\" http://localhost:9200/_cluster/health > /dev/null"]
       interval: 10s
       timeout: 5s
       retries: 18
@@ -361,6 +392,8 @@ services:
     environment:
       LS_JAVA_OPTS: -Xms384m -Xmx384m
       xpack.monitoring.enabled: "false"
+      KAFKA_PASSWORD: ${KAFKA_LOGSTASH_PASSWORD:-kafka_dev_logstash_password}
+      ELASTICSEARCH_PASSWORD: ${LOGSTASH_ES_PASSWORD:-logstash_dev_es_password}
     volumes:
       - ./monitoring/logstash/pipeline.conf:/usr/share/logstash/pipeline/logstash.conf:ro
     restart: unless-stopped
@@ -375,6 +408,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+    environment:
+      KAFKA_PASSWORD: ${KAFKA_FILEBEAT_PASSWORD:-kafka_dev_filebeat_password}
     volumes:
       - ./monitoring/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -387,17 +422,21 @@ services:
     image: kibana:9.5.5
     profiles: [monitoring]
     depends_on:
-      elasticsearch:
-        condition: service_healthy
+      # Not before this: it sets Kibana's password.
+      elasticsearch-setup:
+        condition: service_completed_successfully
     environment:
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: kibana_system
+      ELASTICSEARCH_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-kibana_dev_system_password}
       TELEMETRY_OPTIN: "false"
       # Kibana crashes during start-up with 512 MB.
       NODE_OPTIONS: --max-old-space-size=1024
     ports:
       - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:5601/api/status > /dev/null"]
+      # Once Kibana is ready it asks for a sign-in (401); before that it answers 503.
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '200|401'"]
       interval: 10s
       timeout: 10s
       retries: 30
@@ -405,13 +444,18 @@ services:
     restart: unless-stopped
     mem_limit: 1536m
 
-  # Sets how long Elasticsearch keeps things, then stops.
+  # Sets up the logins for Kibana, Logstash and Grafana and how long things are kept, then stops.
   elasticsearch-setup:
     image: curlimages/curl:8.17.0
     profiles: [monitoring]
     depends_on:
       elasticsearch:
         condition: service_healthy
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-elastic_dev_password}
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-kibana_dev_system_password}
+      LOGSTASH_ES_PASSWORD: ${LOGSTASH_ES_PASSWORD:-logstash_dev_es_password}
+      GRAFANA_ES_PASSWORD: ${GRAFANA_ES_PASSWORD:-grafana_dev_es_password}
     entrypoint: ["sh", "/setup.sh"]
     volumes:
       - ./monitoring/setup-elasticsearch.sh:/setup.sh:ro
@@ -423,6 +467,8 @@ services:
     depends_on:
       kibana:
         condition: service_healthy
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-elastic_dev_password}
     entrypoint: ["sh", "/setup.sh"]
     volumes:
       - ./monitoring/setup-kibana.sh:/setup.sh:ro
@@ -505,6 +551,8 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_ANALYTICS_REPORTING_ENABLED: "false"
+      # For the "Bank logs" data source, which signs in to Elasticsearch as grafana_bank.
+      ELASTICSEARCH_PASSWORD: ${GRAFANA_ES_PASSWORD:-grafana_dev_es_password}
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     volumes:

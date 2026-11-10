@@ -1,5 +1,12 @@
 # Used by .\gradlew.bat :customer-service:bootRun. Matches the local database in compose.yaml.
 spring:
+  kafka:
+    # Kafka in compose.yaml asks for a sign-in.
+    security:
+      protocol: SASL_PLAINTEXT
+    properties:
+      sasl.mechanism: PLAIN
+      sasl.jaas.config: org.apache.kafka.common.security.plain.PlainLoginModule required username="bank" password="${KAFKA_BANK_PASSWORD:kafka_dev_bank_password}";
   datasource:
     password: ${DB_PASSWORD:customer_dev_db_password}
   # The *-migrate steps in compose.yaml run the migrations, as the owner. This login cannot.

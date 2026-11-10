@@ -1,5 +1,12 @@
 # Used by .\gradlew.bat :gateway:bootRun.
 spring:
+  kafka:
+    # Kafka in compose.yaml asks for a sign-in.
+    security:
+      protocol: SASL_PLAINTEXT
+    properties:
+      sasl.mechanism: PLAIN
+      sasl.jaas.config: org.apache.kafka.common.security.plain.PlainLoginModule required username="bank" password="${KAFKA_BANK_PASSWORD:kafka_dev_bank_password}";
   data:
     redis:
       password: ${REDIS_PASSWORD:bank_dev_redis_password}

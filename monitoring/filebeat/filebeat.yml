@@ -21,6 +21,10 @@ processors:
 
 output.kafka:
   hosts: ["kafka:9092"]
+  # Signs in as "filebeat"; the password comes from compose.yaml.
+  username: filebeat
+  password: ${KAFKA_PASSWORD}
+  sasl.mechanism: PLAIN
   topic: bank.logs
   required_acks: 1
   compression: gzip

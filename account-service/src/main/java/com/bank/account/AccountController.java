@@ -4,7 +4,9 @@ import com.bank.account.dto.AccountResponse;
 import com.bank.account.dto.CreateAccountRequest;
 import com.bank.account.dto.MoneyRequest;
 import com.bank.account.dto.TransactionResponse;
+import com.bank.account.dto.TransferAllowanceResponse;
 import com.bank.account.dto.TransferRequest;
+import com.bank.common.security.Callers;
 import jakarta.validation.Valid;
 import java.net.URI;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,7 @@ import org.springframework.data.web.PagedModel;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AccountController {
 
     private final AccountService accountService;
+    private final CustomerTransfers customerTransfers;
 
     @PostMapping
     public ResponseEntity<AccountResponse> create(@Valid @RequestBody CreateAccountRequest request) {
@@ -62,10 +66,26 @@ public class AccountController {
         return accountService.withdraw(id, request.amount());
     }
 
-    /** Answers with the account the money left. */
+    /**
+     * Answers with the account the money left. Staff may send from any account, without a limit; a
+     * customer only from their own accounts, up to their daily limit.
+     */
+    @PreAuthorize("@access.canViewAccount(authentication, #id)")
     @PostMapping("/{id}/transfer")
-    public AccountResponse transfer(@PathVariable Long id, @Valid @RequestBody TransferRequest request) {
-        return accountService.transfer(id, request.toAccountNumber(), request.amount());
+    public AccountResponse transfer(@PathVariable Long id, @Valid @RequestBody TransferRequest request,
+            Authentication authentication) {
+        if (Callers.isStaff(authentication)) {
+            return accountService.transfer(id, request.toAccountNumber(), request.amount());
+        }
+        return customerTransfers.transfer(Callers.customerIdOf(authentication), id, request.toAccountNumber(),
+                request.amount());
+    }
+
+    /** How much the account's owner may still send by transfer today. */
+    @PreAuthorize("@access.canViewAccount(authentication, #id)")
+    @GetMapping("/{id}/transfer-allowance")
+    public TransferAllowanceResponse transferAllowance(@PathVariable Long id) {
+        return customerTransfers.allowance(id);
     }
 
     /** Newest entries first unless a sort parameter says otherwise. */

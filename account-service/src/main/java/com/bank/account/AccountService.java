@@ -80,6 +80,11 @@ public class AccountService {
      * Each side is changed only just before it is flushed, so that a flush writes only that side.
      */
     public AccountResponse transfer(Long id, String toAccountNumber, BigDecimal amount) {
+        return transfer(id, toAccountNumber, amount, false);
+    }
+
+    /** byCustomer marks a transfer the customer sent themselves, which counts towards their daily limit. */
+    AccountResponse transfer(Long id, String toAccountNumber, BigDecimal amount, boolean byCustomer) {
         Account from = findAccount(id);
         Account to = accountRepository.findByAccountNumber(toAccountNumber)
                 .orElseThrow(() -> new ResourceNotFoundException("No account has the number " + toAccountNumber + "."));
@@ -88,30 +93,31 @@ public class AccountService {
         }
         UUID transferId = UUID.randomUUID();
         if (from.getId() < to.getId()) {
-            sendTransfer(from, to, amount, transferId);
-            receiveTransfer(to, from, amount, transferId);
+            sendTransfer(from, to, amount, transferId, byCustomer);
+            receiveTransfer(to, from, amount, transferId, byCustomer);
         } else {
-            receiveTransfer(to, from, amount, transferId);
-            sendTransfer(from, to, amount, transferId);
+            receiveTransfer(to, from, amount, transferId, byCustomer);
+            sendTransfer(from, to, amount, transferId, byCustomer);
         }
         return AccountResponse.from(from);
     }
 
-    private void sendTransfer(Account from, Account to, BigDecimal amount, UUID transferId) {
+    private void sendTransfer(Account from, Account to, BigDecimal amount, UUID transferId, boolean byCustomer) {
         from.withdraw(amount);
-        saveTransferSide(from, to, TransactionType.TRANSFER_OUT, "TRANSFER_SENT", amount, transferId);
+        saveTransferSide(from, to, TransactionType.TRANSFER_OUT, "TRANSFER_SENT", amount, transferId, byCustomer);
     }
 
-    private void receiveTransfer(Account to, Account from, BigDecimal amount, UUID transferId) {
+    private void receiveTransfer(Account to, Account from, BigDecimal amount, UUID transferId,
+            boolean byCustomer) {
         to.deposit(amount);
-        saveTransferSide(to, from, TransactionType.TRANSFER_IN, "TRANSFER_RECEIVED", amount, transferId);
+        saveTransferSide(to, from, TransactionType.TRANSFER_IN, "TRANSFER_RECEIVED", amount, transferId, byCustomer);
     }
 
     private void saveTransferSide(Account account, Account other, TransactionType type, String event,
-            BigDecimal amount, UUID transferId) {
+            BigDecimal amount, UUID transferId, boolean byCustomer) {
         Account saved = accountRepository.saveAndFlush(account);
         transactionRepository.save(
-                new AccountTransaction(saved, type, amount, transferId, other.getAccountNumber()));
+                new AccountTransaction(saved, type, amount, transferId, other.getAccountNumber(), byCustomer));
         events.record(event, saved.getId(), Map.of("amount", amount, "balanceAfter", saved.getBalance(),
                 "transferId", transferId.toString(), "otherAccountId", other.getId(),
                 "customerId", saved.getCustomerId(), "accountEnding", accountEnding(saved)));

@@ -87,6 +87,13 @@ transaction, so money is never taken without arriving. Each side gets its own le
 Send an `Idempotency-Key` so that a repeat can't move the money twice. If another request changed one
 of the accounts at the same moment, the answer is a 409 and nothing was applied.
 
+Customers can send transfers too, but only from their own accounts, and only up to a daily limit:
+1000.00 by default, counted over all their accounts from midnight UTC. Set `CUSTOMER_DAILY_TRANSFER_LIMIT`
+and `TRANSFER_LIMIT_TIMEZONE` in `.env` to change them. A transfer over the limit gets a 422 saying how
+much is left. Transfers staff make have no limit and do not count towards it.
+`GET /api/accounts/{id}/transfer-allowance` shows the limit, what the owner has sent today and what is left.
+Two transfers sent at the same moment are counted one after the other, so they can't together pass the limit.
+
 ### Audit log
 
 Every change that produces an event also gets an `audit_log` row saying who did it, in the same database

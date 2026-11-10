@@ -18,6 +18,7 @@ function resetState() {
     customer: null,
     accounts: [],
     account: null,
+    allowance: null,
     transactions: { content: [], page: null },
     transactionPage: 0,
     detailError: null,
@@ -42,7 +43,7 @@ class ApiError extends Error {
   }
 }
 
-const MONEY_FIELDS = new Set(["balance", "amount", "balanceAfter"]);
+const MONEY_FIELDS = new Set(["balance", "amount", "balanceAfter", "dailyLimit", "sentToday", "remainingToday"]);
 
 /**
  * Keeps money as the digits the server sent. As a JavaScript number, a large balance
@@ -239,12 +240,14 @@ async function fetchAllAccounts(customerId) {
 async function selectAccount(id, transactionPage = 0) {
   const version = ++selectionVersion;
   try {
-    const [account, transactions] = await Promise.all([
+    const [account, transactions, allowance] = await Promise.all([
       api(`/api/accounts/${id}`),
       api(`/api/accounts/${id}/transactions?page=${transactionPage}&size=${TRANSACTION_PAGE_SIZE}`),
+      api(`/api/accounts/${id}/transfer-allowance`),
     ]);
     if (version !== selectionVersion) return;
     state.account = account;
+    state.allowance = allowance;
     state.transactions = transactions;
     state.transactionPage = transactionPage;
     state.accounts = state.accounts.map((existing) => (existing.id === account.id ? account : existing));
@@ -430,8 +433,20 @@ function entryLabel(entry) {
   return titleCase(entry.type);
 }
 
+/** Customers have a daily limit on the transfers they send themselves; staff transfers have none. */
+function allowanceText({ dailyLimit, remainingToday }) {
+  const remaining = moneyFormat.format(remainingToday);
+  const limit = moneyFormat.format(dailyLimit);
+  if (isStaff()) {
+    return `This customer can still send ${remaining} of their ${limit} daily limit themselves today. Transfers made by staff have no limit.`;
+  }
+  return Number(remainingToday) > 0
+    ? `You can send up to ${remaining} more today. Your daily transfer limit is ${limit}.`
+    : `You have used today's transfer limit of ${limit}. You can send more tomorrow.`;
+}
+
 function accountPanel() {
-  const { account, transactions } = state;
+  const { account, transactions, allowance } = state;
   const amount = el("input", {
     name: "amount", inputmode: "decimal", autocomplete: "off", placeholder: "0.00", "aria-label": "Amount",
   });
@@ -442,7 +457,8 @@ function accountPanel() {
     name: "toAccountNumber", inputmode: "numeric", autocomplete: "off", maxlength: "12", placeholder: "12 digits",
     "aria-label": "To account number",
   });
-  const transfer = el("button", { type: "button" }, "Transfer");
+  // Customers may only send transfers, so for them Transfer is the main button.
+  const transfer = el("button", { type: isStaff() ? "button" : "submit", class: isStaff() ? "" : "primary" }, "Transfer");
 
   const submit = async (operation) => {
     const value = amount.value.trim();
@@ -499,12 +515,19 @@ function accountPanel() {
     el("div", { class: `balance-card balance-${account.type.toLowerCase()}` },
       el("p", { class: "balance-label" }, "Balance"),
       el("p", { class: "balance money" }, moneyFormat.format(account.balance))),
-    isStaff() ? el("form", {
-      class: "money-form",
-      novalidate: "",
-      onsubmit: (event) => { event.preventDefault(); submit("deposit"); },
-    }, el("label", {}, "Amount", amount), deposit, withdraw, el("label", {}, "To account", toAccount), transfer) : null,
-    isStaff() ? amountError : null,
+    isStaff()
+      ? el("form", {
+          class: "money-form",
+          novalidate: "",
+          onsubmit: (event) => { event.preventDefault(); submit("deposit"); },
+        }, el("label", {}, "Amount", amount), deposit, withdraw, el("label", {}, "To account", toAccount), transfer)
+      : el("form", {
+          class: "money-form",
+          novalidate: "",
+          onsubmit: (event) => { event.preventDefault(); submit("transfer"); },
+        }, el("label", {}, "To account", toAccount), el("label", {}, "Amount", amount), transfer),
+    amountError,
+    allowance ? el("p", { class: "muted allowance" }, allowanceText(allowance)) : null,
     el("h3", { class: "spaced-top" }, "Transactions"),
     rows.length
       ? el("div", { class: "table-wrap" }, el("table", {},

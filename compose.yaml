@@ -190,6 +190,8 @@ services:
     environment:
       <<: *service-env
       DB_NAME: bank_accounts
+      CUSTOMER_DAILY_TRANSFER_LIMIT: ${CUSTOMER_DAILY_TRANSFER_LIMIT:-1000.00}
+      TRANSFER_LIMIT_TIMEZONE: ${TRANSFER_LIMIT_TIMEZONE:-UTC}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8082/actuator/health"]
       interval: 10s

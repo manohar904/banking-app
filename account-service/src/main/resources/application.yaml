@@ -46,3 +46,8 @@ bank:
     token-secret: ${INTERNAL_TOKEN_SECRET}
   services:
     customer-url: ${CUSTOMER_SERVICE_URL:http://localhost:8081}
+  transfers:
+    # The most a customer may send by transfer in one day, over all their accounts. Staff have no limit.
+    customer-daily-limit: ${CUSTOMER_DAILY_TRANSFER_LIMIT:1000.00}
+    # The day starts at midnight here.
+    time-zone: ${TRANSFER_LIMIT_TIMEZONE:UTC}

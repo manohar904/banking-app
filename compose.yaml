@@ -306,6 +306,9 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_LOG_RETENTION_HOURS: 168
+      # Keep the data in the kafka-data volume. Without this the image keeps it inside the container,
+      # and every new container started with no topics, no consumer positions and no access rules.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
     ports:
       - "127.0.0.1:${KAFKA_PORT:-9094}:9094"

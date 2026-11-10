@@ -69,8 +69,19 @@ the next start once fewer than 30 days are left.
 - Elasticsearch answers only HTTPS, so Kibana, Logstash and Grafana use it too. In a browser it is
   https://localhost:9200, which warns about the certificate because the browser does not know the
   stack's authority.
-- Postgres and Redis are not encrypted yet.
-- Tests and `bootRun` use plain HTTP, as before.
+- PostgreSQL accepts network connections only over TLS (`postgres/pg_hba.conf`). The services, the
+  migration steps, `db-init` and the backups all check its certificate. Its health check uses the
+  local socket inside the container.
+- Redis accepts only TLS. The gateway's sessions use it, trusting only the stack's authority.
+- Tests and `bootRun` use plain HTTP, as before. A service run from the IDE still reaches PostgreSQL
+  on port 5432: the driver uses TLS by itself when the server offers it. The gateway needs the
+  authority's certificate to reach Redis. Save it with
+  `docker run --rm -v pract_certs:/c alpine cat /c/ca/ca.crt > ca.crt` and start the gateway with
+  `SPRING_DATA_REDIS_SSL_BUNDLE=internal` and
+  `SPRING_SSL_BUNDLE_PEM_INTERNAL_TRUSTSTORE_CERTIFICATE=file:ca.crt`.
+
+So everything that travels between the parts of the bank is encrypted. What is left is the browser's
+connection to the gateway and to Kibana, Grafana and Prometheus, which stay on this computer.
 
 ## What replaced the shared database
 
@@ -344,9 +355,6 @@ This is set up for local development. Before real use:
   other values in `.env.example`). Kafka checks who signs in but not what each login may do; adding
   ACLs would stop, for example, Filebeat from reading bank events. Kafka also runs as a single broker,
   so it has no second copy of anything.
-- Encrypt the connections to Postgres and Redis. They require passwords, but these travel over plain
-  connections, which are only as private as the Docker network. Everything else between the parts is
-  already encrypted.
 
 ## Tests
 

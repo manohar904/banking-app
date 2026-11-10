@@ -38,6 +38,14 @@ x-internal-urls: &internal-urls
   ACCOUNT_SERVICE_URL: https://account-service:8082
   AUTH_SERVICE_URL: https://auth-service:8083
 
+# The certificate authority's certificate, for anything that connects to another part over TLS.
+x-ca-mount: &ca-mount {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
+
+# How libpq (psql, pg_dump, pg_restore) connects to PostgreSQL: TLS, checking its certificate.
+x-postgres-tls: &postgres-tls
+  PGSSLMODE: verify-full
+  PGSSLROOTCERT: /certs/ca/ca.crt
+
 x-certs-ready: &certs-ready
   certs:
     condition: service_completed_successfully
@@ -48,6 +56,8 @@ x-service-env: &service-env
   SERVER_SSL_BUNDLE: internal
   DB_HOST: postgres
   DB_PORT: 5432
+  # TLS to PostgreSQL, checking its certificate against the stack's certificate authority.
+  DB_URL_OPTIONS: "?sslmode=verify-full&sslrootcert=/certs/ca/ca.crt"
   # Migrations run in the *-migrate steps, with a login the services do not have.
   SPRING_FLYWAY_ENABLED: "false"
   # Each service signs in to PostgreSQL with its own login; see db-init.
@@ -69,6 +79,18 @@ x-migrate: &migrate
 services:
   postgres:
     image: postgres:18-alpine
+    # TLS with a certificate from the certs step, and postgres/pg_hba.conf, which turns away anyone
+    # connecting over the network without it. PostgreSQL refuses a key file others can read, so it
+    # gets its own private copy first.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        install -m 600 -o postgres -g postgres /certs/own/tls.key /tmp/server.key
+        && exec docker-entrypoint.sh postgres
+        -c ssl=on -c ssl_cert_file=/certs/own/tls.crt -c ssl_key_file=/tmp/server.key
+        -c hba_file=/etc/postgresql/pg_hba.conf
+    depends_on: *certs-ready
     environment:
       # No database of its own: db-init creates one per service.
       POSTGRES_DB: postgres
@@ -80,6 +102,8 @@ services:
     volumes:
       # PostgreSQL 18+ images keep their data under /var/lib/postgresql.
       - postgres-data:/var/lib/postgresql
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: postgres}}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -93,7 +117,7 @@ services:
   certs:
     image: alpine/openssl:3.5.9
     entrypoint: ["sh", "/make-certs.sh"]
-    command: [gateway, customer-service, account-service, auth-service, kafka, elasticsearch]
+    command: [gateway, customer-service, account-service, auth-service, kafka, elasticsearch, postgres, redis]
     volumes:
       - ./certs/make-certs.sh:/make-certs.sh:ro
       - certs:/certs
@@ -111,6 +135,7 @@ services:
       PGUSER: ${DB_USERNAME:-bank}
       PGPASSWORD: ${DB_PASSWORD:-bank_dev_password}
       PGDATABASE: postgres
+      <<: *postgres-tls
       CUSTOMER_DB_PASSWORD: ${CUSTOMER_DB_PASSWORD:-customer_dev_db_password}
       ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD:-account_dev_db_password}
       AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-auth_dev_db_password}
@@ -120,6 +145,7 @@ services:
     entrypoint: ["sh", "/db-init.sh"]
     volumes:
       - ./db-init/db-init.sh:/db-init.sh:ro
+      - *ca-mount
 
   # Each service's migrations run here, as the database owner, and then exit. The services themselves
   # only get a login that can read and write rows, so one that is broken into cannot change its tables
@@ -127,7 +153,7 @@ services:
   customer-migrate:
     <<: *migrate
     environment:
-      FLYWAY_URL: jdbc:postgresql://postgres:5432/bank_customers
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/bank_customers?sslmode=verify-full&sslrootcert=/certs/ca/ca.crt
       FLYWAY_USER: customer_owner
       FLYWAY_PASSWORD: ${CUSTOMER_DB_OWNER_PASSWORD:-customer_dev_db_owner_password}
       FLYWAY_LOCATIONS: filesystem:/flyway/migrations,filesystem:/flyway/after-migrate
@@ -135,11 +161,12 @@ services:
     volumes:
       - ./customer-service/src/main/resources/db/migration:/flyway/migrations:ro
       - ./db-init/after-migrate:/flyway/after-migrate:ro
+      - *ca-mount
 
   account-migrate:
     <<: *migrate
     environment:
-      FLYWAY_URL: jdbc:postgresql://postgres:5432/bank_accounts
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/bank_accounts?sslmode=verify-full&sslrootcert=/certs/ca/ca.crt
       FLYWAY_USER: account_owner
       FLYWAY_PASSWORD: ${ACCOUNT_DB_OWNER_PASSWORD:-account_dev_db_owner_password}
       FLYWAY_LOCATIONS: filesystem:/flyway/migrations,filesystem:/flyway/after-migrate
@@ -147,11 +174,12 @@ services:
     volumes:
       - ./account-service/src/main/resources/db/migration:/flyway/migrations:ro
       - ./db-init/after-migrate:/flyway/after-migrate:ro
+      - *ca-mount
 
   auth-migrate:
     <<: *migrate
     environment:
-      FLYWAY_URL: jdbc:postgresql://postgres:5432/bank_auth
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/bank_auth?sslmode=verify-full&sslrootcert=/certs/ca/ca.crt
       FLYWAY_USER: auth_owner
       FLYWAY_PASSWORD: ${AUTH_DB_OWNER_PASSWORD:-auth_dev_db_owner_password}
       FLYWAY_LOCATIONS: filesystem:/flyway/migrations,filesystem:/flyway/after-migrate
@@ -159,6 +187,7 @@ services:
     volumes:
       - ./auth-service/src/main/resources/db/migration:/flyway/migrations:ro
       - ./db-init/after-migrate:/flyway/after-migrate:ro
+      - *ca-mount
 
   # Backs up every database daily and test-restores each backup. See README.md, "Backups".
   # Backups go to a folder on this computer, not a Docker volume, so `down -v` cannot remove them.
@@ -175,9 +204,11 @@ services:
       BACKUP_TIME: ${BACKUP_TIME:-02:00}
       BACKUP_KEEP: ${BACKUP_KEEP:-7}
       TZ: ${BACKUP_TIMEZONE:-UTC}
+      <<: *postgres-tls
     volumes:
       - ./backup/backup.sh:/backup.sh:ro
       - ${BACKUP_DIR:-./backups}:/backups
+      - *ca-mount
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 9188"]
       interval: 10s
@@ -201,15 +232,31 @@ services:
       - 96mb
       - --maxmemory-policy
       - volatile-lru
+      # Only TLS, with a certificate from the certs step. Clients need the password, not a certificate.
+      - --port
+      - "0"
+      - --tls-port
+      - "6379"
+      - --tls-cert-file
+      - /certs/own/tls.crt
+      - --tls-key-file
+      - /certs/own/tls.key
+      - --tls-ca-cert-file
+      - /certs/ca/ca.crt
+      - --tls-auth-clients
+      - "no"
+    depends_on: *certs-ready
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD:-bank_dev_redis_password}
     ports:
-      # Bound to localhost, for running the gateway from the IDE.
+      # Bound to localhost, for running the gateway from the IDE (see README.md).
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: redis}}
+      - {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli --tls --cacert /certs/ca/ca.crt ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -401,6 +448,8 @@ services:
       # "native" reads the browser address from X-Forwarded-For. Only behind a trusted proxy; see README.md.
       SERVER_FORWARD_HEADERS_STRATEGY: ${GATEWAY_FORWARD_HEADERS:-none}
       REDIS_HOST: redis
+      # Sessions in Redis go over TLS too, trusting only the stack's certificate authority.
+      SPRING_DATA_REDIS_SSL_BUNDLE: internal
       REDIS_PASSWORD: ${REDIS_PASSWORD:-bank_dev_redis_password}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
@@ -462,7 +511,7 @@ services:
       ELASTICSEARCH_PASSWORD: ${LOGSTASH_ES_PASSWORD:-logstash_dev_es_password}
     volumes:
       - ./monitoring/logstash/pipeline.conf:/usr/share/logstash/pipeline/logstash.conf:ro
-      - &ca-mount {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
+      - *ca-mount
     restart: unless-stopped
     mem_limit: 768m
 

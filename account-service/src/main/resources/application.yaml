@@ -16,7 +16,7 @@ spring:
         size: 2
   datasource:
     # This service alone uses this database. The password has no default; see application-local.yaml.
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:bank_accounts}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:bank_accounts}${DB_URL_OPTIONS:}
     username: ${DB_USERNAME:account_service}
     password: ${DB_PASSWORD}
   jpa:

@@ -25,6 +25,8 @@ output.kafka:
   username: filebeat
   password: ${KAFKA_PASSWORD}
   sasl.mechanism: PLAIN
+  # Over TLS, trusting only the stack's certificate authority.
+  ssl.certificate_authorities: ["/certs/ca/ca.crt"]
   topic: bank.logs
   required_acks: 1
   compression: gzip

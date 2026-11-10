@@ -64,7 +64,12 @@ the next start once fewer than 30 days are left.
   services fetch the key from there.
 - To start over with new certificates, remove the volume: `docker compose down` and then
   `docker volume rm pract_certs`.
-- Kafka, Elasticsearch, Postgres and Redis are not encrypted yet.
+- Kafka is encrypted too inside the Docker network (`kafka:9092`). The port published to this
+  computer alone (9094), for running a service from the IDE, is not: that traffic never leaves it.
+- Elasticsearch answers only HTTPS, so Kibana, Logstash and Grafana use it too. In a browser it is
+  https://localhost:9200, which warns about the certificate because the browser does not know the
+  stack's authority.
+- Postgres and Redis are not encrypted yet.
 - Tests and `bootRun` use plain HTTP, as before.
 
 ## What replaced the shared database
@@ -207,7 +212,7 @@ docker compose --profile monitoring up -d --build
 | Kibana | http://localhost:5601 | `elastic` / `elastic_dev_password` | Searching logs, events and heartbeats (open **Discover**) |
 | Prometheus | http://localhost:9090 | none | Raw metrics and **Alerts** |
 | Alertmanager | http://localhost:9093 | none | Which alerts are being sent, and silencing them |
-| Elasticsearch | http://localhost:9200 | `elastic` / `elastic_dev_password` | Stores what Kibana searches |
+| Elasticsearch | https://localhost:9200 (the browser warns about the certificate) | `elastic` / `elastic_dev_password` | Stores what Kibana searches |
 | Tempo | through Grafana | | Stores traces: one request followed through every service it touched |
 
 The monitoring tools add about 4 GB of memory, and the logs take some minutes to appear after the first
@@ -339,9 +344,9 @@ This is set up for local development. Before real use:
   other values in `.env.example`). Kafka checks who signs in but not what each login may do; adding
   ACLs would stop, for example, Filebeat from reading bank events. Kafka also runs as a single broker,
   so it has no second copy of anything.
-- Encrypt the connections to Kafka, Elasticsearch, Postgres and Redis. They require passwords, but
-  these travel over plain connections, which are only as private as the Docker network. The calls
-  between the gateway and the services are already HTTPS.
+- Encrypt the connections to Postgres and Redis. They require passwords, but these travel over plain
+  connections, which are only as private as the Docker network. Everything else between the parts is
+  already encrypted.
 
 ## Tests
 

@@ -9,8 +9,8 @@
 # People sign in to Kibana as "elastic". The passwords must not contain " or \.
 set -eu
 
-ES=http://elasticsearch:9200
-es() { curl -fsS -u "elastic:$ELASTIC_PASSWORD" -H 'Content-Type: application/json' "$@"; echo; }
+ES=https://elasticsearch:9200
+es() { curl -fsS --cacert /certs/ca/ca.crt -u "elastic:$ELASTIC_PASSWORD" -H 'Content-Type: application/json' "$@"; echo; }
 
 echo "Setting Kibana's password"
 es -X POST "$ES/_security/user/kibana_system/_password" -d "{\"password\": \"$KIBANA_SYSTEM_PASSWORD\"}"

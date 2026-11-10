@@ -2,14 +2,15 @@ package com.bank.gateway;
 
 import com.bank.common.security.InternalTokens;
 import com.bank.common.security.Problems;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import com.bank.common.security.InternalTokens;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.CsrfConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
@@ -25,8 +26,10 @@ import org.springframework.security.web.authentication.logout.HttpStatusReturnin
 public class GatewaySecurityConfig {
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, AuthServiceAuthenticationProvider authService)
-            throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http, AuthServiceAuthenticationProvider authService,
+            @Value("${" + HttpRedirect.PORT + ":}") String redirectPort,
+            @Value("${bank.http-redirect.browser-http-port:0}") int browserHttpPort,
+            @Value("${bank.http-redirect.browser-https-port:0}") int browserHttpsPort) throws Exception {
         http
                 // Not authenticationProvider(): Spring would also add this bean to a parent manager,
                 // which is asked again after a failure, so each failed sign-in would be checked twice.
@@ -78,8 +81,18 @@ public class GatewaySecurityConfig {
                                 Problems.write(response, HttpStatus.FORBIDDEN, "You do not have access to this.")))
                 // An API call that needs sign-in should answer 401, not be replayed after sign-in.
                 .requestCache(cache -> cache.disable())
-                .headers(headers -> headers.contentSecurityPolicy(csp -> csp.policyDirectives(
-                        "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")));
+                .headers(headers -> headers
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(
+                                "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"))
+                        // No HSTS: for "localhost" a browser would apply it to every port, including
+                        // Kibana and Grafana, which are plain HTTP. Turn it on with a real domain name.
+                        .httpStrictTransportSecurity(hsts -> hsts.disable()));
+        if (!redirectPort.isBlank()) {
+            // Anything arriving on the plain HTTP port (see HttpRedirect) is sent on to HTTPS. The
+            // ports are the ones the browser sees, which compose.yaml may publish differently.
+            http.redirectToHttps(Customizer.withDefaults())
+                    .portMapper(ports -> ports.http(browserHttpPort).mapsTo(browserHttpsPort));
+        }
         return http.build();
     }
 }

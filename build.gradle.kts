@@ -62,6 +62,7 @@ configure(listOf(project(":customer-service"), project(":account-service"), proj
         "implementation"("org.flywaydb:flyway-database-postgresql")
         "runtimeOnly"("org.postgresql:postgresql")
 
+        "testImplementation"(testFixtures(project(":common")))
         "testImplementation"("org.springframework.boot:spring-boot-starter-webmvc-test")
         "testImplementation"("org.springframework.boot:spring-boot-starter-security-test")
         // Integration tests run against real PostgreSQL in Docker.

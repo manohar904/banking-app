@@ -18,6 +18,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.bank.auth.CustomerServiceClient;
 import com.bank.common.ResourceNotFoundException;
 import com.bank.common.security.InternalTokens;
+import com.bank.common.security.TestGateway;
 import com.jayway.jsonpath.JsonPath;
 import java.util.List;
 import java.util.UUID;
@@ -35,6 +36,8 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -48,7 +51,6 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * customer service is stubbed; e2e-tests covers the services working together.
  */
 @SpringBootTest(properties = {
-        "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
         "bank.kafka.enabled=false",
         "bank.sign-in.max-failures-per-address=" + AuthIntegrationTest.MAX_FAILURES_PER_ADDRESS,
         "bank.password-reset.from=bank@example.com",
@@ -70,6 +72,14 @@ class AuthIntegrationTest {
     @Container
     @ServiceConnection
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
+
+    /** Signs tokens for people, as the real gateway does. */
+    static TestGateway gateway = TestGateway.start();
+
+    @DynamicPropertySource
+    static void trustTheTestGateway(DynamicPropertyRegistry registry) {
+        gateway.register(registry);
+    }
 
     @Autowired
     private MockMvc mockMvc;
@@ -328,7 +338,7 @@ class AuthIntegrationTest {
         long customer = newCustomerId();
         String email = newLogin(customer);
         Number userId = JsonPath.read(authenticate(email, PASSWORD).andReturn().getResponse().getContentAsString(), "$.userId");
-        String token = tokens.forUser(userId.longValue(), "CUSTOMER", customer);
+        String token = gateway.forUser(userId.longValue(), "CUSTOMER", customer);
 
         mockMvc.perform(as(token, get("/api/auth/me")))
                 .andExpect(status().isOk())
@@ -362,7 +372,7 @@ class AuthIntegrationTest {
     void onlyStaffMaySetALogin() throws Exception {
         long customer = newCustomerId();
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", customer), put("/api/customers/{id}/login", customer))
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", customer), put("/api/customers/{id}/login", customer))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"password\": \"a-brand-new-password\"}"))
                 .andExpect(status().isForbidden());
     }
@@ -373,7 +383,7 @@ class AuthIntegrationTest {
 
         mockMvc.perform(post("/internal/authentications").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), post("/internal/authentications"))
+        mockMvc.perform(as(gateway.forUser(0L, "STAFF", null), post("/internal/authentications"))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isForbidden());
     }
@@ -389,7 +399,7 @@ class AuthIntegrationTest {
         newLogin(customer);
         deleteLogin(customer).andExpect(status().isNoContent());
 
-        mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), get("/api/auth/audit"))
+        mockMvc.perform(as(gateway.forUser(0L, "STAFF", null), get("/api/auth/audit"))
                         .param("targetId", String.valueOf(customer)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].action").value("LOGIN_REMOVED"))
@@ -404,7 +414,7 @@ class AuthIntegrationTest {
     void customerCannotReadTheAuditLog() throws Exception {
         long customer = newCustomerId();
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", customer), get("/api/auth/audit")))
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", customer), get("/api/auth/audit")))
                 .andExpect(status().isForbidden());
     }
 
@@ -414,7 +424,7 @@ class AuthIntegrationTest {
         String email = newLogin(customer);
         Number userId = JsonPath.read(authenticate(email, PASSWORD).andReturn().getResponse().getContentAsString(), "$.userId");
 
-        mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), get("/api/auth/audit/actors"))
+        mockMvc.perform(as(gateway.forUser(0L, "STAFF", null), get("/api/auth/audit/actors"))
                         .param("ids", userId + "," + Long.MAX_VALUE))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$['" + userId + "']").value(email))
@@ -425,7 +435,7 @@ class AuthIntegrationTest {
     void customerCannotLookUpEmails() throws Exception {
         long customer = newCustomerId();
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", customer), get("/api/auth/audit/actors")).param("ids", "1"))
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", customer), get("/api/auth/audit/actors")).param("ids", "1"))
                 .andExpect(status().isForbidden());
     }
 
@@ -433,7 +443,7 @@ class AuthIntegrationTest {
     void tooManyIdsAtOnceAreRefused() throws Exception {
         String ids = String.join(",", java.util.Collections.nCopies(101, "1"));
 
-        mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), get("/api/auth/audit/actors")).param("ids", ids))
+        mockMvc.perform(as(gateway.forUser(0L, "STAFF", null), get("/api/auth/audit/actors")).param("ids", ids))
                 .andExpect(status().isBadRequest());
     }
 
@@ -571,7 +581,7 @@ class AuthIntegrationTest {
 
         mockMvc.perform(post("/internal/password-reset-requests").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), post("/internal/password-reset-requests"))
+        mockMvc.perform(as(gateway.forUser(0L, "STAFF", null), post("/internal/password-reset-requests"))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isForbidden());
     }
@@ -636,7 +646,7 @@ class AuthIntegrationTest {
     }
 
     private ResultActions setLogin(long customer, String password) throws Exception {
-        return mockMvc.perform(as(tokens.forUser(0L, "STAFF", null), put("/api/customers/{id}/login", customer))
+        return mockMvc.perform(as(gateway.forUser(0L, "STAFF", null), put("/api/customers/{id}/login", customer))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"password\": \"" + password + "\"}"));
     }

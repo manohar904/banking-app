@@ -17,6 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.bank.common.ConflictException;
 import com.bank.common.security.InternalTokens;
+import com.bank.common.security.TestGateway;
 import com.bank.customer.AccountServiceClient;
 import com.bank.customer.AuthServiceClient;
 import com.bank.customer.TransactionEmails;
@@ -43,6 +44,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.MailSendException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -57,7 +60,6 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * other services are stubbed; e2e-tests covers them working together.
  */
 @SpringBootTest(properties = {
-        "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
         "bank.kafka.enabled=false",
         "bank.transaction-emails.from=bank@example.com"
 })
@@ -69,6 +71,14 @@ class CustomerApiIntegrationTest {
     @Container
     @ServiceConnection
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
+
+    /** Signs tokens for people, as the real gateway does. */
+    static TestGateway gateway = TestGateway.start();
+
+    @DynamicPropertySource
+    static void trustTheTestGateway(DynamicPropertyRegistry registry) {
+        gateway.register(registry);
+    }
 
     @Autowired
     private MockMvc mockMvc;
@@ -257,7 +267,7 @@ class CustomerApiIntegrationTest {
     void customerSeesOnlyThemselves() throws Exception {
         long ada = createCustomer();
         long other = createCustomer();
-        String token = tokens.forUser(1L, "CUSTOMER", ada);
+        String token = gateway.forUser(1L, "CUSTOMER", ada);
 
         mockMvc.perform(as(token, get("/api/customers/{id}", ada)))
                 .andExpect(status().isOk())
@@ -301,7 +311,7 @@ class CustomerApiIntegrationTest {
     void customerCannotReadTheAuditLog() throws Exception {
         long ada = createCustomer();
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/customers/audit")))
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", ada), get("/api/customers/audit")))
                 .andExpect(status().isForbidden());
     }
 
@@ -317,7 +327,7 @@ class CustomerApiIntegrationTest {
     void transactionEmailsAreOnByDefaultAndCustomersCanSeeTheSetting() throws Exception {
         long ada = createCustomer();
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/customers/{id}", ada)))
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", ada), get("/api/customers/{id}", ada)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactionEmailsEnabled").value(true));
     }
@@ -340,7 +350,7 @@ class CustomerApiIntegrationTest {
     void customerCannotChangeTheirTransactionEmailSetting() throws Exception {
         long ada = createCustomer();
 
-        setTransactionEmails(as(tokens.forUser(1L, "CUSTOMER", ada), put("/api/customers/{id}/transaction-emails", ada)), false)
+        setTransactionEmails(as(gateway.forUser(1L, "CUSTOMER", ada), put("/api/customers/{id}/transaction-emails", ada)), false)
                 .andExpect(status().isForbidden());
 
         assertThat(emailsEnabled(ada)).isTrue();
@@ -478,7 +488,7 @@ class CustomerApiIntegrationTest {
     }
 
     private MockHttpServletRequestBuilder asStaff(MockHttpServletRequestBuilder request) {
-        return as(tokens.forUser(0L, "STAFF", null), request);
+        return as(gateway.forUser(0L, "STAFF", null), request);
     }
 
     private static MockHttpServletRequestBuilder as(String token, MockHttpServletRequestBuilder request) {

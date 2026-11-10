@@ -22,7 +22,6 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 final class BankingSystem implements AutoCloseable {
 
     private static final Duration START_TIMEOUT = Duration.ofMinutes(3);
-    private static final String TOKEN_SECRET = "an-end-to-end-test-secret-that-is-long-enough";
     private static final String REDIS_PASSWORD = "an-end-to-end-redis-password";
 
     private final PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
@@ -60,7 +59,8 @@ final class BankingSystem implements AutoCloseable {
         urls = Map.of(
                 "CUSTOMER_SERVICE_URL", "http://127.0.0.1:" + customerPort,
                 "ACCOUNT_SERVICE_URL", "http://127.0.0.1:" + accountPort,
-                "AUTH_SERVICE_URL", "http://127.0.0.1:" + authPort);
+                "AUTH_SERVICE_URL", "http://127.0.0.1:" + authPort,
+                "GATEWAY_URL", "http://127.0.0.1:" + gatewayPort);
 
         launch("customer-service", customerPort, urls, Map.of("DB_NAME", "bank_customers"));
         launch("account-service", accountPort, urls, Map.of("DB_NAME", "bank_accounts"));
@@ -100,7 +100,6 @@ final class BankingSystem implements AutoCloseable {
         env.putAll(urls);
         env.putAll(extra);
         env.put("SERVER_PORT", String.valueOf(port));
-        env.put("INTERNAL_TOKEN_SECRET", TOKEN_SECRET);
         env.put("KAFKA_BOOTSTRAP_SERVERS", kafka.getBootstrapServers());
         env.put("BANK_HEALTH_HEARTBEATINTERVAL", "2000");
         env.put("BANK_EVENTS_RELAYDELAY", "200");

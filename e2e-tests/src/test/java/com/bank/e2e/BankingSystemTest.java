@@ -119,6 +119,14 @@ class BankingSystemTest {
     }
 
     @Test
+    void theGatewaysPublicKeyIsPublishedWithoutItsPrivateHalf() throws Exception {
+        Browser.Response keys = browser().get("/.well-known/internal-jwks.json");
+
+        assertThat(keys.status()).isEqualTo(200);
+        assertThat(keys.body()).contains("\"kty\":\"EC\"").doesNotContain("\"d\":");
+    }
+
+    @Test
     void anythingOutsideTheKnownFilesAndApiIsRefused() throws Exception {
         assertThat(browser().get("/login").status()).isEqualTo(401);
         assertThat(browser().get("/application.yaml").status()).isEqualTo(401);

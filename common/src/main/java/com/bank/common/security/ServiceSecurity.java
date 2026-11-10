@@ -39,7 +39,9 @@ public final class ServiceSecurity {
         http
                 .authorizeHttpRequests(requests -> {
                     // Metrics are open to the private network. Only the gateway has a published port.
-                    requests.requestMatchers("/actuator/health", "/actuator/prometheus", "/error").permitAll()
+                    // Public keys are safe to show anyone; they only check tokens, never make them.
+                    requests.requestMatchers("/actuator/health", "/actuator/prometheus", "/error",
+                                    InternalTokens.PUBLIC_KEYS_PATH).permitAll()
                             .requestMatchers("/internal/**").hasRole(InternalTokens.SERVICE_ROLE);
                     apiRules.customize(requests);
                     requests.anyRequest().denyAll();

@@ -65,9 +65,6 @@ bank:
     max-failures-per-address: ${SIGN_IN_MAX_FAILURES_PER_ADDRESS:20}
   audit:
     path: /api/auth/audit
-  internal:
-    # Signs the tokens services use with each other. There is deliberately no default.
-    token-secret: ${INTERNAL_TOKEN_SECRET}
   services:
     customer-url: ${CUSTOMER_SERVICE_URL:http://localhost:8081}
   admin:

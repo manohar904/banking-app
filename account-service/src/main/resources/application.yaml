@@ -41,9 +41,6 @@ management:
 bank:
   audit:
     path: /api/accounts/audit
-  internal:
-    # Signs the tokens services use with each other. There is deliberately no default.
-    token-secret: ${INTERNAL_TOKEN_SECRET}
   services:
     customer-url: ${CUSTOMER_SERVICE_URL:http://localhost:8081}
   transfers:

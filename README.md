@@ -36,8 +36,18 @@ The browser only ever talks to the gateway, which is the only service with a pub
 3. That service decides what the caller may do, so the access rules sit next to the data.
 
 Services call each other on `/internal/**`, which requires a token with the `SERVICE` role and which
-the gateway does not route. All services share `INTERNAL_TOKEN_SECRET`, so **set your own value
-outside local development**.
+the gateway does not route.
+
+There is no shared secret for these tokens. The gateway and each service make their own key pair when
+they start, keep the private half to themselves, and publish the public half at
+`/.well-known/internal-jwks.json`. A token is checked with the key of whoever it says issued it, and:
+
+- a token for a person is only accepted from the gateway, and
+- a service token can only name the service that signed it.
+
+So a service that is broken into can call the others as itself, but cannot act as a person, as staff,
+or as another service. Restarting a part gives it a new key; the others fetch it the first time they
+see a token signed with it.
 
 ## What replaced the shared database
 
@@ -273,19 +283,18 @@ working.
 
 This is set up for local development. Before real use:
 
-- Set your own `INTERNAL_TOKEN_SECRET`, `DB_PASSWORD`, `CUSTOMER_DB_PASSWORD`, `ACCOUNT_DB_PASSWORD`,
+- Set your own `DB_PASSWORD`, `CUSTOMER_DB_PASSWORD`, `ACCOUNT_DB_PASSWORD`,
   `AUTH_DB_PASSWORD`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and `SESSION_COOKIE_SECURE=true`, and
   serve the gateway over HTTPS.
 - Turn on security in Elasticsearch, Kibana and Kafka. They have no passwords here, and are only safe
   because they are published to this computer alone. Kafka also runs as a single broker, so it has no
   second copy of anything.
 - Add TLS between services: passwords travel from the gateway to `auth-service` over plain HTTP, which
-  is only as private as the Docker network.
+  is only as private as the Docker network. The public keys for internal tokens are fetched the same
+  way, so someone able to tamper with that network could swap in their own.
 - Each service owns its own tables, so a compromised service could still turn off its audit log's
   protection against changes. A separate login for migrations, with the service itself only allowed
   to read and write rows, would close that.
-- Any service holding the shared secret can issue a token for anyone. Signing with a private key held
-  only by the gateway would limit the damage if one service is compromised.
 
 ## Tests
 

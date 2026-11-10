@@ -15,12 +15,14 @@ import com.bank.account.CustomerServiceClient;
 import com.bank.common.ResourceNotFoundException;
 import com.bank.common.idempotency.IdempotencyFilter;
 import com.bank.common.security.InternalTokens;
+import com.bank.common.security.TestGateway;
 import com.jayway.jsonpath.JsonPath;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -38,6 +40,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -55,7 +59,6 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * commit time are what is being tested. Each test creates its own account instead.
  */
 @SpringBootTest(properties = {
-        "bank.internal.token-secret=a-test-secret-that-is-long-enough-for-hs256",
         "bank.kafka.enabled=false",
         "bank.transfers.customer-daily-limit=100.00"
 })
@@ -67,6 +70,14 @@ class AccountApiIntegrationTest {
     @Container
     @ServiceConnection
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
+
+    /** Signs tokens for people, as the real gateway does. */
+    static TestGateway gateway = TestGateway.start();
+
+    @DynamicPropertySource
+    static void trustTheTestGateway(DynamicPropertyRegistry registry) {
+        gateway.register(registry);
+    }
 
     @Autowired
     private MockMvc mockMvc;
@@ -337,7 +348,7 @@ class AccountApiIntegrationTest {
 
         transfer(from, numberOf(to), "300.00").andExpect(status().isOk());
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/accounts/{id}/transfer-allowance", from)))
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", ada), get("/api/accounts/{id}/transfer-allowance", from)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.dailyLimit").value(100.00))
                 .andExpect(jsonPath("$.sentToday").value(0))
@@ -354,7 +365,7 @@ class AccountApiIntegrationTest {
         createAccount(ada);
         long someoneElses = fundedAccount("1.00");
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada),
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", ada),
                         get("/api/accounts/{id}/transfer-allowance", someoneElses)))
                 .andExpect(status().isForbidden());
     }
@@ -386,7 +397,7 @@ class AccountApiIntegrationTest {
         long from = fundedAccount("10.00");
         transfer(from, numberOf(account), "2.00").andExpect(status().isOk());
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/accounts/{id}/transactions", account)))
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", ada), get("/api/accounts/{id}/transactions", account)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].type").value("TRANSFER_IN"))
                 .andExpect(jsonPath("$.content[0].transferId").doesNotExist());
@@ -450,7 +461,7 @@ class AccountApiIntegrationTest {
     @Test
     void auditLogSaysWhoDidWhatToWhich() throws Exception {
         long account = createAccount(newCustomerId());
-        String staffMember = tokens.forUser(77L, "STAFF", null);
+        String staffMember = gateway.forUser(77L, "STAFF", null);
 
         mockMvc.perform(as(staffMember, post("/api/accounts/{id}/deposit", account))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\": 100.10}"))
@@ -472,7 +483,7 @@ class AccountApiIntegrationTest {
     void auditLogCanBeFilteredByWhoDidIt() throws Exception {
         long staffId = ThreadLocalRandom.current().nextLong(1000, Long.MAX_VALUE);
         long account = createAccount(newCustomerId());
-        mockMvc.perform(as(tokens.forUser(staffId, "STAFF", null), post("/api/accounts/{id}/deposit", account))
+        mockMvc.perform(as(gateway.forUser(staffId, "STAFF", null), post("/api/accounts/{id}/deposit", account))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\": 1.00}"))
                 .andExpect(status().isOk());
 
@@ -505,7 +516,7 @@ class AccountApiIntegrationTest {
     @Test
     void eventsSayWhoTheyWereDoneFor() throws Exception {
         long account = createAccount(newCustomerId());
-        mockMvc.perform(as(tokens.forUser(78L, "STAFF", null), post("/api/accounts/{id}/deposit", account))
+        mockMvc.perform(as(gateway.forUser(78L, "STAFF", null), post("/api/accounts/{id}/deposit", account))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\": 1.00}"))
                 .andExpect(status().isOk());
 
@@ -519,7 +530,7 @@ class AccountApiIntegrationTest {
         long ada = newCustomerId();
         createAccount(ada);
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), get("/api/accounts/audit")))
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", ada), get("/api/accounts/audit")))
                 .andExpect(status().isForbidden());
     }
 
@@ -618,7 +629,7 @@ class AccountApiIntegrationTest {
         long ada = newCustomerId();
         long account = createAccount(ada);
         long other = createAccount(newCustomerId());
-        String token = tokens.forUser(1L, "CUSTOMER", ada);
+        String token = gateway.forUser(1L, "CUSTOMER", ada);
 
         mockMvc.perform(as(token, get("/api/accounts/{id}", account))).andExpect(status().isOk());
         mockMvc.perform(as(token, get("/api/accounts").param("customerId", String.valueOf(ada))))
@@ -636,7 +647,7 @@ class AccountApiIntegrationTest {
         long ada = newCustomerId();
         long account = createAccount(ada);
 
-        mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", ada), post("/api/accounts/{id}/deposit", account))
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", ada), post("/api/accounts/{id}/deposit", account))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\": 1.00}"))
                 .andExpect(status().isForbidden());
 
@@ -648,8 +659,18 @@ class AccountApiIntegrationTest {
         mockMvc.perform(get("/api/accounts/1")).andExpect(status().isUnauthorized());
         mockMvc.perform(as("not-a-token", get("/api/accounts/1"))).andExpect(status().isUnauthorized());
 
-        String forged = new InternalTokens("a-different-secret-that-is-long-enough-too", "evil").forUser(1L, "STAFF", null);
+        // Its own key pair, but claiming to be the gateway.
+        String forged = new InternalTokens("gateway", Map.of()).forUser(1L, "STAFF", null);
         mockMvc.perform(as(forged, get("/api/accounts"))).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void thisServiceCannotIssueATokenForAPersonEvenToItself() throws Exception {
+        // What someone who broke into this service could make: only the gateway may vouch for a person.
+        mockMvc.perform(as(tokens.forUser(1L, "STAFF", null), get("/api/accounts")))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(as(gateway.forUser(1L, "STAFF", null), get("/api/accounts")))
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -740,7 +761,7 @@ class AccountApiIntegrationTest {
         long account = createAccount(newCustomerId());
         moveWithKey(account, "deposit", "1.00", "shared").andExpect(status().isOk());
 
-        mockMvc.perform(as(tokens.forUser(1L, "STAFF", null), post("/api/accounts/" + account + "/deposit"))
+        mockMvc.perform(as(gateway.forUser(1L, "STAFF", null), post("/api/accounts/" + account + "/deposit"))
                         .header(IdempotencyFilter.KEY_HEADER, "shared")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"amount\": 1.00}"))
@@ -783,7 +804,7 @@ class AccountApiIntegrationTest {
     }
 
     private MockHttpServletRequestBuilder asStaff(MockHttpServletRequestBuilder request) {
-        return as(tokens.forUser(0L, "STAFF", null), request);
+        return as(gateway.forUser(0L, "STAFF", null), request);
     }
 
     private static MockHttpServletRequestBuilder as(String token, MockHttpServletRequestBuilder request) {
@@ -844,7 +865,7 @@ class AccountApiIntegrationTest {
 
     private ResultActions customerTransfer(long customerId, long fromId, String toNumber, String amount)
             throws Exception {
-        return mockMvc.perform(as(tokens.forUser(1L, "CUSTOMER", customerId), post("/api/accounts/{id}/transfer", fromId))
+        return mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", customerId), post("/api/accounts/{id}/transfer", fromId))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"toAccountNumber\": \"" + toNumber + "\", \"amount\": " + amount + "}"));
     }

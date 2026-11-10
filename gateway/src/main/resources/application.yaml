@@ -52,9 +52,6 @@ server:
         secure: ${SESSION_COOKIE_SECURE:false}
 
 bank:
-  internal:
-    # Signs the tokens services use with each other. There is deliberately no default.
-    token-secret: ${INTERNAL_TOKEN_SECRET}
   services:
     customer-url: ${CUSTOMER_SERVICE_URL:http://localhost:8081}
     account-url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}

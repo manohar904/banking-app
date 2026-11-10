@@ -7,6 +7,7 @@
 #   ca-private/ca.key    the CA's key. Only this step sees it.
 #   <name>/tls.crt       a certificate for <name> (and localhost), valid for about two years
 #   <name>/tls.key       its private key
+#   <name>/tls.pem       both in one file, which is how Kafka reads them
 set -eu
 cd /certs
 umask 022
@@ -23,6 +24,7 @@ for name in "$@"; do
   if [ -f "$name/tls.crt" ] \
       && openssl x509 -checkend 2592000 -noout -in "$name/tls.crt" > /dev/null \
       && openssl verify -CAfile ca/ca.crt "$name/tls.crt" > /dev/null 2>&1; then
+    [ -f "$name/tls.pem" ] || { cat "$name/tls.key" "$name/tls.crt" > "$name/tls.pem"; chmod 644 "$name/tls.pem"; }
     continue
   fi
   echo "Making a certificate for $name"
@@ -34,7 +36,8 @@ for name in "$@"; do
   openssl x509 -req -in "$name/tls.csr" -CA ca/ca.crt -CAkey ca-private/ca.key -CAcreateserial \
     -CAserial ca-private/ca.srl -out "$name/tls.crt" -days 825 -extfile "$name/tls.ext" 2> /dev/null
   rm "$name/tls.csr" "$name/tls.ext"
+  cat "$name/tls.key" "$name/tls.crt" > "$name/tls.pem"
   # Readable by the non-root user each service runs as. Only that service mounts this folder.
-  chmod 644 "$name/tls.key"
+  chmod 644 "$name/tls.key" "$name/tls.pem"
 done
 echo "Certificates ready"

@@ -11,13 +11,16 @@ datasources:
     uid: bank-logs
     type: elasticsearch
     access: proxy
-    url: http://elasticsearch:9200
+    url: https://elasticsearch:9200
     # A login that may only read the logs; see monitoring/setup-elasticsearch.sh.
     basicAuth: true
     basicAuthUser: grafana_bank
     secureJsonData:
       basicAuthPassword: $ELASTICSEARCH_PASSWORD
+      # HTTPS, trusting only the stack's certificate authority.
+      tlsCACert: $__file{/certs/ca/ca.crt}
     jsonData:
+      tlsAuthWithCACert: true
       index: bank-logs-*
       timeField: "@timestamp"
   # Traces of requests across the services. "Logs for this span" opens the matching log lines.

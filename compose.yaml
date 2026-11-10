@@ -12,10 +12,12 @@ x-service: &service
     # Filebeat only collects logs from containers that carry this label.
     co.elastic.logs/enabled: "true"
 
-# How the bank's apps sign in to Kafka. The tests use a Kafka without sign-in, so this lives here.
+# How the bank's apps sign in to Kafka, over TLS that trusts only the stack's certificate authority
+# (the "internal" bundle in x-tls). The tests use a plain Kafka without sign-in, so this lives here.
 x-kafka-client: &kafka-client
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-  SPRING_KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT
+  SPRING_KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  SPRING_KAFKA_SSL_BUNDLE: internal
   SPRING_KAFKA_PROPERTIES_SASL_MECHANISM: PLAIN
   SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG: >-
     org.apache.kafka.common.security.plain.PlainLoginModule required
@@ -91,7 +93,7 @@ services:
   certs:
     image: alpine/openssl:3.5.9
     entrypoint: ["sh", "/make-certs.sh"]
-    command: [gateway, customer-service, account-service, auth-service]
+    command: [gateway, customer-service, account-service, auth-service, kafka, elasticsearch]
     volumes:
       - ./certs/make-certs.sh:/make-certs.sh:ro
       - certs:/certs
@@ -223,12 +225,19 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       # The controller listens inside this container only. Everyone else must sign in (SASL/PLAIN).
+      # Inside the Docker network that is also encrypted (SASL_SSL). The port published to this
+      # computer alone, for running a service from the IDE, is not: that never leaves the machine.
       KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://localhost:9093,EXTERNAL://:9094
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT:-9094}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:SASL_PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:SASL_SSL,CONTROLLER:PLAINTEXT,EXTERNAL:SASL_PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
       KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      # Its certificate, from the certs step, and the certificate authority it trusts.
+      KAFKA_SSL_KEYSTORE_TYPE: PEM
+      KAFKA_SSL_KEYSTORE_LOCATION: /certs/own/tls.pem
+      KAFKA_SSL_TRUSTSTORE_TYPE: PEM
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /certs/ca/ca.crt
       # Who may sign in. "admin" is the broker itself; the rest are the bank's apps, Filebeat and Logstash.
       KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG: &kafka-users >-
         org.apache.kafka.common.security.plain.PlainLoginModule required
@@ -250,11 +259,14 @@ services:
       - "127.0.0.1:${KAFKA_PORT:-9094}:9094"
     volumes:
       - kafka-data:/var/lib/kafka/data
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: kafka}}
+      - {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
+    depends_on: *certs-ready
     healthcheck:
       test:
         - CMD-SHELL
         - >-
-          printf 'security.protocol=SASL_PLAINTEXT\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="%s";\n' "$$HEALTHCHECK_PASSWORD" > /tmp/healthcheck.properties
+          printf 'security.protocol=SASL_SSL\nssl.truststore.type=PEM\nssl.truststore.location=/certs/ca/ca.crt\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="%s";\n' "$$HEALTHCHECK_PASSWORD" > /tmp/healthcheck.properties
           && /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 --command-config /tmp/healthcheck.properties > /dev/null
       interval: 10s
       timeout: 10s
@@ -407,9 +419,13 @@ services:
     profiles: [monitoring]
     environment:
       discovery.type: single-node
-      # Everyone must sign in. Not encrypted yet; see README.md, "Before production".
+      # Everyone must sign in, over HTTPS with a certificate from the certs step. There is only one
+      # node, so nothing travels between nodes to encrypt.
       xpack.security.enabled: "true"
-      xpack.security.http.ssl.enabled: "false"
+      xpack.security.http.ssl.enabled: "true"
+      xpack.security.http.ssl.key: certs/own/tls.key
+      xpack.security.http.ssl.certificate: certs/own/tls.crt
+      xpack.security.http.ssl.certificate_authorities: certs/ca/ca.crt
       xpack.security.transport.ssl.enabled: "false"
       ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-elastic_dev_password}
       ES_JAVA_OPTS: -Xms768m -Xmx768m
@@ -417,8 +433,11 @@ services:
       - "127.0.0.1:${ELASTICSEARCH_PORT:-9200}:9200"
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
+      - {type: volume, source: certs, target: /usr/share/elasticsearch/config/certs/own, read_only: true, volume: {subpath: elasticsearch}}
+      - {type: volume, source: certs, target: /usr/share/elasticsearch/config/certs/ca, read_only: true, volume: {subpath: ca}}
+    depends_on: *certs-ready
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs -u \"elastic:$$ELASTIC_PASSWORD\" http://localhost:9200/_cluster/health > /dev/null"]
+      test: ["CMD-SHELL", "curl -fs --cacert config/certs/ca/ca.crt -u \"elastic:$$ELASTIC_PASSWORD\" https://localhost:9200/_cluster/health > /dev/null"]
       interval: 10s
       timeout: 5s
       retries: 18
@@ -443,6 +462,7 @@ services:
       ELASTICSEARCH_PASSWORD: ${LOGSTASH_ES_PASSWORD:-logstash_dev_es_password}
     volumes:
       - ./monitoring/logstash/pipeline.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - &ca-mount {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
     restart: unless-stopped
     mem_limit: 768m
 
@@ -462,6 +482,7 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - filebeat-data:/usr/share/filebeat/data
+      - *ca-mount
     restart: unless-stopped
     mem_limit: 256m
 
@@ -473,12 +494,15 @@ services:
       elasticsearch-setup:
         condition: service_completed_successfully
     environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_HOSTS: https://elasticsearch:9200
+      ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES: /certs/ca/ca.crt
       ELASTICSEARCH_USERNAME: kibana_system
       ELASTICSEARCH_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-kibana_dev_system_password}
       TELEMETRY_OPTIN: "false"
       # Kibana crashes during start-up with 512 MB.
       NODE_OPTIONS: --max-old-space-size=1024
+    volumes:
+      - *ca-mount
     ports:
       - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
     healthcheck:
@@ -506,6 +530,7 @@ services:
     entrypoint: ["sh", "/setup.sh"]
     volumes:
       - ./monitoring/setup-elasticsearch.sh:/setup.sh:ro
+      - *ca-mount
 
   # Creates the ready-made views in Kibana, then stops.
   kibana-setup:
@@ -609,6 +634,7 @@ services:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
+      - *ca-mount
     restart: unless-stopped
     mem_limit: 384m
 

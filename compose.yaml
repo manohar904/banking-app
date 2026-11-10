@@ -215,6 +215,7 @@ services:
       # Only used to create the first staff login, when none exists yet.
       BANK_ADMIN_EMAIL: ${BANK_ADMIN_EMAIL:-}
       BANK_ADMIN_PASSWORD: ${BANK_ADMIN_PASSWORD:-}
+      SIGN_IN_MAX_FAILURES_PER_ADDRESS: ${SIGN_IN_MAX_FAILURES_PER_ADDRESS:-20}
       # Password reset emails use the same account as alert emails. Without one, none are sent.
       MAIL_HOST: ${PASSWORD_RESET_SMTP_HOST:-smtp.gmail.com}
       MAIL_PORT: ${PASSWORD_RESET_SMTP_PORT:-587}
@@ -252,6 +253,8 @@ services:
       LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
       MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: ${TRACING_ENDPOINT:-http://tempo:4318/v1/traces}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      # "native" reads the browser address from X-Forwarded-For. Only behind a trusted proxy; see README.md.
+      SERVER_FORWARD_HEADERS_STRATEGY: ${GATEWAY_FORWARD_HEADERS:-none}
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD:-bank_dev_redis_password}
     ports:

@@ -12,6 +12,7 @@ import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.web.authentication.WebAuthenticationDetails;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
@@ -33,7 +34,8 @@ public class AuthServiceAuthenticationProvider implements AuthenticationProvider
             SignedInUser user = authService.post().uri("/internal/authentications")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("email", authentication.getName(),
-                            "password", String.valueOf(authentication.getCredentials())))
+                            "password", String.valueOf(authentication.getCredentials()),
+                            "clientAddress", clientAddress(authentication)))
                     .retrieve()
                     .body(SignedInUser.class);
             return UsernamePasswordAuthenticationToken.authenticated(user, null,
@@ -45,6 +47,15 @@ public class AuthServiceAuthenticationProvider implements AuthenticationProvider
         } catch (RestClientException e) {
             throw new AuthenticationServiceException("The auth service could not check the password.", e);
         }
+    }
+
+    /**
+     * The browser's address, which the auth service limits failed sign-ins by. Behind a proxy this is
+     * the proxy's address unless server.forward-headers-strategy is set; see README.md.
+     */
+    private static String clientAddress(Authentication authentication) {
+        return authentication.getDetails() instanceof WebAuthenticationDetails details
+                && details.getRemoteAddress() != null ? details.getRemoteAddress() : "";
     }
 
     @Override

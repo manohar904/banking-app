@@ -59,6 +59,10 @@ bank:
     # Empty turns reset emails off. Links are built from base-url, never from the request.
     from: ${MAIL_FROM:}
     base-url: ${APP_BASE_URL:http://localhost:8080}
+  sign-in:
+    # Failed sign-ins allowed from one browser address in 15 minutes, over all emails. Each email also
+    # has its own limit of 5 attempts.
+    max-failures-per-address: ${SIGN_IN_MAX_FAILURES_PER_ADDRESS:20}
   audit:
     path: /api/auth/audit
   internal:

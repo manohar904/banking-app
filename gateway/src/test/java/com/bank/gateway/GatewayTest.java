@@ -191,6 +191,13 @@ class GatewayTest {
     }
 
     @Test
+    void theBrowsersAddressIsSentWithTheSignIn() throws Exception {
+        browser.signIn();
+
+        assertThat(auth.lastSignInBody.get()).contains("\"clientAddress\":\"127.0.0.1\"");
+    }
+
+    @Test
     void eachSignInAttemptChecksThePasswordOnce() throws Exception {
         browser.signIn("wrong-password");
         assertThat(auth.passwordChecks.get()).isEqualTo(1);
@@ -470,6 +477,7 @@ class GatewayTest {
         final AtomicReference<String> lastIdempotencyKey = new AtomicReference<>();
         final AtomicReference<String> lastTraceparent = new AtomicReference<>();
         final AtomicInteger passwordChecks = new AtomicInteger();
+        final AtomicReference<String> lastSignInBody = new AtomicReference<>();
         final AtomicReference<Boolean> signInsLimited = new AtomicReference<>(false);
         final AtomicReference<Boolean> hangUp = new AtomicReference<>(false);
         private volatile int status = 200;
@@ -533,6 +541,7 @@ class GatewayTest {
             exchange.getResponseHeaders().set("Connection", "close");
             if (exchange.getRequestURI().getPath().equals("/internal/authentications")) {
                 passwordChecks.incrementAndGet();
+                lastSignInBody.set(requestBody);
                 if (signInsLimited.get()) {
                     respond(exchange, 429, "{}");
                     return;

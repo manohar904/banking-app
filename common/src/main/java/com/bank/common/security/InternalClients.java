@@ -20,11 +20,12 @@ public class InternalClients {
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
 
     private final InternalTokens tokens;
+    private final InternalTls tls;
     // Times each call and passes the trace on, so a request can be followed from service to service.
     private final ObservationRegistry observationRegistry;
 
     public RestClient to(String baseUrl) {
-        HttpClient httpClient = HttpClient.newBuilder()
+        HttpClient httpClient = tls.configure(HttpClient.newBuilder())
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build();

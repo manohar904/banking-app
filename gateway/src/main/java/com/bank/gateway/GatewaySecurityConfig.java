@@ -37,7 +37,7 @@ public class GatewaySecurityConfig {
                         // The services fetch this to check the gateway's tokens. Public keys are safe to show.
                         .requestMatchers(HttpMethod.GET, InternalTokens.PUBLIC_KEYS_PATH).permitAll()
                         // Only served on the private management port. On the main port these are a 404.
-                        .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/prometheus", "/actuator/jwks").permitAll()
                         // For people who cannot sign in. Every other API call needs a session.
                         .requestMatchers(HttpMethod.POST, "/api/auth/password-reset", "/api/auth/password-reset/confirm")
                         .permitAll()

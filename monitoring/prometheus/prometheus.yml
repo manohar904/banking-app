@@ -25,20 +25,33 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: blackbox:9115
+  # The apps answer HTTPS with certificates from the stack's own certificate authority.
   - job_name: gateway
     metrics_path: /actuator/prometheus
+    scheme: https
+    tls_config:
+      ca_file: /certs/ca/ca.crt
     static_configs:
       - targets: ["gateway:8090"]
   - job_name: customer-service
     metrics_path: /actuator/prometheus
+    scheme: https
+    tls_config:
+      ca_file: /certs/ca/ca.crt
     static_configs:
       - targets: ["customer-service:8081"]
   - job_name: account-service
     metrics_path: /actuator/prometheus
+    scheme: https
+    tls_config:
+      ca_file: /certs/ca/ca.crt
     static_configs:
       - targets: ["account-service:8082"]
   - job_name: auth-service
     metrics_path: /actuator/prometheus
+    scheme: https
+    tls_config:
+      ca_file: /certs/ca/ca.crt
     static_configs:
       - targets: ["auth-service:8083"]
   - job_name: backup

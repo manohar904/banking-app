@@ -5,14 +5,15 @@ import com.bank.common.events.KafkaPublishingConfig;
 import com.bank.common.observability.TracingConfig;
 import com.bank.common.security.InternalClients;
 import com.bank.common.security.InternalKeysController;
+import com.bank.common.security.InternalTls;
 import com.bank.common.security.InternalTokens;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Import;
 
 @SpringBootApplication
-@Import({InternalTokens.class, InternalKeysController.class, InternalClients.class, KafkaPublishingConfig.class,
-        HealthHeartbeat.class, TracingConfig.class})
+@Import({InternalTokens.class, InternalTls.class, InternalKeysController.class, InternalClients.class,
+        KafkaPublishingConfig.class, HealthHeartbeat.class, TracingConfig.class})
 public class GatewayApplication {
 
     public static void main(String[] args) {

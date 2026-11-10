@@ -26,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -73,6 +74,9 @@ class GatewayTest {
 
     @LocalServerPort
     private int port;
+
+    @LocalManagementPort
+    private int managementPort;
 
     @Autowired
     private InternalTokens tokens;
@@ -138,6 +142,22 @@ class GatewayTest {
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("\"kty\":\"EC\"", "\"x\":", "\"y\":").doesNotContain("\"d\":");
+    }
+
+    @Test
+    void theManagementPortServesTheSamePublicKeyForTheServices() throws Exception {
+        HttpResponse<String> fromManagement = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + managementPort + "/actuator/jwks")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        String fromMainPort = browser.get(InternalTokens.PUBLIC_KEYS_PATH).body();
+
+        assertThat(fromManagement.statusCode()).isEqualTo(200);
+        assertThat(fromManagement.body()).contains("\"kty\":\"EC\"").doesNotContain("\"d\":");
+        assertThat(kid(fromManagement.body())).isEqualTo(kid(fromMainPort));
+    }
+
+    private static String kid(String keySet) {
+        return keySet.replaceAll("(?s).*\"kid\":\"([^\"]+)\".*", "$1");
     }
 
     @Test

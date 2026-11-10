@@ -16,6 +16,7 @@ import java.net.URI;
 import java.text.ParseException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import javax.net.ssl.SSLSocketFactory;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
@@ -41,12 +42,16 @@ class InternalTokenDecoder implements JwtDecoder {
     private final String serviceName;
     private final JWK ownPublicKey;
     private final Map<String, String> issuers;
+    private final SSLSocketFactory socketFactory;
     private final Map<String, JwtDecoder> decoders = new ConcurrentHashMap<>();
 
-    InternalTokenDecoder(String serviceName, JWK ownPublicKey, Map<String, String> issuers) {
+    /** issuers maps names to the URLs of their public keys. A null socketFactory means Java's usual one. */
+    InternalTokenDecoder(String serviceName, JWK ownPublicKey, Map<String, String> issuers,
+            SSLSocketFactory socketFactory) {
         this.serviceName = serviceName;
         this.ownPublicKey = ownPublicKey;
         this.issuers = Map.copyOf(issuers);
+        this.socketFactory = socketFactory;
     }
 
     @Override
@@ -89,16 +94,16 @@ class InternalTokenDecoder implements JwtDecoder {
                         new OAuth2Error("invalid_token", issuer + " may not issue this token.", null));
     }
 
-    private static JWKSource<SecurityContext> remoteKeys(String baseUrl) {
+    private JWKSource<SecurityContext> remoteKeys(String url) {
         try {
-            return JWKSourceBuilder.<SecurityContext>create(
-                            URI.create(baseUrl + InternalTokens.PUBLIC_KEYS_PATH).toURL(),
-                            new DefaultResourceRetriever(FETCH_TIMEOUT_MILLIS, FETCH_TIMEOUT_MILLIS, MAX_KEY_SET_BYTES))
+            return JWKSourceBuilder.<SecurityContext>create(URI.create(url).toURL(),
+                            new DefaultResourceRetriever(FETCH_TIMEOUT_MILLIS, FETCH_TIMEOUT_MILLIS, MAX_KEY_SET_BYTES,
+                                    true, socketFactory))
                     .rateLimited(MIN_MILLIS_BETWEEN_FETCHES)
                     .retrying(true)
                     .build();
         } catch (MalformedURLException | IllegalArgumentException e) {
-            throw new IllegalStateException("Not a valid URL for internal keys: " + baseUrl, e);
+            throw new IllegalStateException("Not a valid URL for internal keys: " + url, e);
         }
     }
 }

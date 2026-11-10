@@ -625,6 +625,29 @@ class AccountApiIntegrationTest {
     // Access rules.
 
     @Test
+    void staffCanFindAnAccountByItsNumber() throws Exception {
+        long account = fundedAccount("12.50");
+
+        mockMvc.perform(asStaff(get("/api/accounts/by-number/{number}", numberOf(account))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(account))
+                .andExpect(jsonPath("$.balance").value(12.50));
+        mockMvc.perform(asStaff(get("/api/accounts/by-number/{number}", "000000000000")))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(asStaff(get("/api/accounts/by-number/{number}", "123")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void customerCannotLookUpAccountsByNumber() throws Exception {
+        long ada = newCustomerId();
+        long own = createAccount(ada);
+
+        mockMvc.perform(as(gateway.forUser(1L, "CUSTOMER", ada), get("/api/accounts/by-number/{number}", numberOf(own))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void customerSeesOnlyTheirOwnAccounts() throws Exception {
         long ada = newCustomerId();
         long account = createAccount(ada);

@@ -23,6 +23,7 @@ function resetState() {
     transactionPage: 0,
     detailError: null,
     audit: null,
+    findAccount: false,
   });
 }
 
@@ -174,6 +175,7 @@ async function reloadCustomersAfterDelete() {
 
 /** Each service keeps its own log, so one is shown at a time. That also keeps real page numbers. */
 async function openAuditLog(source = "accounts", page = 0) {
+  state.findAccount = false;
   const version = ++selectionVersion;
   let audit = { source, entries: { content: [], page: null }, actors: {} };
   let failure = null;
@@ -202,6 +204,7 @@ function closeAuditLog() {
 }
 
 async function selectCustomer(id) {
+  state.findAccount = false;
   state.audit = null;
   const version = ++selectionVersion;
   try {
@@ -273,12 +276,83 @@ function welcomePanel() {
     el("h2", {}, "Welcome back"),
     el("p", {}, "Pick a customer on the left to see their accounts, or add a new one."),
     el("div", { class: "welcome-tiles" },
-      el("div", { class: "welcome-tile tile-customers" },
+      el("button", { type: "button", class: "welcome-tile tile-customers", onclick: openFirstCustomer },
         el("strong", {}, "Customers"), el("span", {}, "Open accounts and manage sign-ins.")),
-      el("div", { class: "welcome-tile tile-money" },
+      el("button", { type: "button", class: "welcome-tile tile-money", onclick: openFindAccount },
         el("strong", {}, "Money"), el("span", {}, "Deposit, withdraw and transfer.")),
-      el("div", { class: "welcome-tile tile-audit" },
+      el("button", { type: "button", class: "welcome-tile tile-audit", onclick: () => openAuditLog() },
         el("strong", {}, "Audit log"), el("span", {}, "See who changed what, and when."))));
+}
+
+/** The Customers tile: the first customer in the list, or the New customer form if there are none. */
+function openFirstCustomer() {
+  const first = state.customers.content[0];
+  if (!first) {
+    openCustomerDialog();
+    return;
+  }
+  selectCustomer(first.id).then(() => $("customer-list").querySelector("button")?.focus());
+}
+
+/** The Money tile: money is moved on an account's page, so this finds the account first. */
+function openFindAccount() {
+  selectionVersion++;
+  state.findAccount = true;
+  state.audit = null;
+  state.customer = null;
+  state.account = null;
+  state.detailError = null;
+  renderCustomers();
+  renderDetail();
+  $("detail").querySelector("input")?.focus();
+}
+
+function closeFindAccount() {
+  state.findAccount = false;
+  renderDetail();
+}
+
+function findAccountPanel() {
+  const number = el("input", {
+    name: "accountNumber", inputmode: "numeric", autocomplete: "off", maxlength: "12", placeholder: "12 digits",
+    "aria-label": "Account number",
+  });
+  const error = el("span", { class: "field-error", role: "alert" });
+  const open = el("button", { type: "submit", class: "primary" }, "Open account");
+
+  const submit = async () => {
+    const value = number.value.replace(/\s/g, "");
+    if (!/^\d{12}$/.test(value)) {
+      error.textContent = "Enter the 12-digit account number.";
+      return;
+    }
+    error.textContent = "";
+    open.disabled = true;
+    try {
+      const account = await api(`/api/accounts/by-number/${value}`);
+      state.findAccount = false;
+      await selectCustomer(account.customerId);
+      await selectAccount(account.id);
+      return;
+    } catch (failure) {
+      error.textContent = failure.status === 404 ? "No account has that number." : failure.message;
+    }
+    open.disabled = false;
+  };
+
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-head" },
+      el("div", {},
+        el("h2", {}, "Money"),
+        el("p", { class: "muted" }, "Find the account to deposit into, withdraw from or transfer from.")),
+      el("button", { type: "button", onclick: closeFindAccount }, "Close")),
+    el("form", {
+      class: "money-form",
+      novalidate: "",
+      onsubmit: (event) => { event.preventDefault(); submit(); },
+    }, el("label", {}, "Account number", number), open),
+    error,
+    el("p", { class: "muted" }, "Or pick a customer on the left to see all of their accounts."));
 }
 
 function auditBadgeClass(action) {
@@ -311,6 +385,10 @@ function renderDetail() {
   const error = state.detailError ? el("p", { class: "banner-error", role: "alert" }, state.detailError) : null;
   if (state.audit) {
     detail.replaceChildren(...[error, auditPanel()].filter(Boolean));
+    return;
+  }
+  if (!state.customer && state.findAccount) {
+    detail.replaceChildren(...[error, findAccountPanel()].filter(Boolean));
     return;
   }
   if (!state.customer) {

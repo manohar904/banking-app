@@ -53,6 +53,13 @@ public class AccountService {
     }
 
     @Transactional(readOnly = true)
+    public AccountResponse getByNumber(String accountNumber) {
+        return accountRepository.findByAccountNumber(accountNumber)
+                .map(AccountResponse::from)
+                .orElseThrow(() -> new ResourceNotFoundException("No account has the number " + accountNumber + "."));
+    }
+
+    @Transactional(readOnly = true)
     public Page<AccountResponse> list(Long customerId, Pageable pageable) {
         Page<Account> accounts = customerId == null
                 ? accountRepository.findAll(pageable)

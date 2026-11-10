@@ -56,6 +56,13 @@ public class AccountController {
         return accountService.get(id);
     }
 
+    /** For staff finding an account from its number. Customers see their own accounts in the list. */
+    @PreAuthorize("hasRole('STAFF')")
+    @GetMapping("/by-number/{accountNumber:\\d{12}}")
+    public AccountResponse getByNumber(@PathVariable String accountNumber) {
+        return accountService.getByNumber(accountNumber);
+    }
+
     @PostMapping("/{id}/deposit")
     public AccountResponse deposit(@PathVariable Long id, @Valid @RequestBody MoneyRequest request) {
         return accountService.deposit(id, request.amount());

@@ -16,5 +16,6 @@ export MSYS_NO_PATHCONV=1
 
 services="gateway customer-service account-service auth-service"
 docker compose stop $services
-trap 'docker compose start $services' EXIT
+# db-init gives the restored tables back to each service's own login before the services start.
+trap 'docker compose run --rm --no-deps db-init; docker compose start $services' EXIT
 docker compose exec -T backup sh /backup.sh restore "$@"

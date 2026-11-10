@@ -3,6 +3,7 @@ package com.bank.common.security;
 import java.net.http.HttpClient;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.ssl.NoSuchSslBundleException;
 import org.springframework.boot.ssl.SslBundles;
@@ -23,6 +24,7 @@ public class InternalTls {
 
     private final SSLContext sslContext;
 
+    @Autowired
     public InternalTls(ObjectProvider<SslBundles> bundles) {
         this(contextFrom(bundles.getIfAvailable()));
     }

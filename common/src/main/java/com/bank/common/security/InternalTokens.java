@@ -56,14 +56,19 @@ public class InternalTokens {
     private final InternalTokenDecoder decoder;
 
     @Autowired
-    public InternalTokens(@Value("${spring.application.name}") String serviceName, Environment environment) {
+    public InternalTokens(@Value("${spring.application.name}") String serviceName, Environment environment,
+            InternalTls tls) {
         this(serviceName, Binder.get(environment)
                 .bind("bank.internal.issuers", Bindable.mapOf(String.class, String.class))
-                .orElse(Map.of()));
+                .orElse(Map.of()), tls);
     }
 
-    /** issuers maps each trusted name to the base URL its public keys are published under. */
+    /** issuers maps each trusted name to the URL its public keys are published at. */
     public InternalTokens(String serviceName, Map<String, String> issuers) {
+        this(serviceName, issuers, InternalTls.javaDefaults());
+    }
+
+    private InternalTokens(String serviceName, Map<String, String> issuers, InternalTls tls) {
         this.serviceName = serviceName;
         try {
             this.signingKey = new ECKeyGenerator(Curve.P_256)
@@ -75,7 +80,7 @@ public class InternalTokens {
             throw new IllegalStateException("Could not make a signing key.", e);
         }
         this.encoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(signingKey)));
-        this.decoder = new InternalTokenDecoder(serviceName, signingKey.toPublicJWK(), issuers);
+        this.decoder = new InternalTokenDecoder(serviceName, signingKey.toPublicJWK(), issuers, tls.socketFactory());
     }
 
     /** A token for a signed-in person. customerId is null for staff. Only the gateway's are trusted. */

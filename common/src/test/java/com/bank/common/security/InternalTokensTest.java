@@ -43,7 +43,8 @@ class InternalTokensTest {
         keyServer.createContext("/other" + InternalTokens.PUBLIC_KEYS_PATH, exchange -> respond(exchange, otherService.get()));
         keyServer.start();
         String base = "http://127.0.0.1:" + keyServer.getAddress().getPort();
-        service = new InternalTokens("test-service", Map.of("gateway", base + "/gateway", "other-service", base + "/other"));
+        service = new InternalTokens("test-service", Map.of("gateway", base + "/gateway" + InternalTokens.PUBLIC_KEYS_PATH,
+                "other-service", base + "/other" + InternalTokens.PUBLIC_KEYS_PATH));
     }
 
     @AfterEach

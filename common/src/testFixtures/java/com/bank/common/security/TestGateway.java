@@ -49,7 +49,7 @@ public final class TestGateway {
 
     /** Tells the service under test to trust this gateway's tokens. */
     public void register(DynamicPropertyRegistry registry) {
-        registry.add("bank.internal.issuers[gateway]", this::url);
+        registry.add("bank.internal.issuers[gateway]", () -> url() + InternalTokens.PUBLIC_KEYS_PATH);
     }
 
     /** A token for a signed-in person, as the gateway would send it. customerId is null for staff. */

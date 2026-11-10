@@ -49,6 +49,24 @@ So a service that is broken into can call the others as itself, but cannot act a
 or as another service. Restarting a part gives it a new key; the others fetch it the first time they
 see a token signed with it.
 
+### HTTPS between the parts
+
+Every call between the gateway and the services, and every fetch of a public key, is HTTPS. The
+`certs` step makes the stack's own certificate authority on first start, and a certificate for each
+part, kept in the `certs` volume. Each part sees only its own key; the authority's key never leaves the
+`certs` step. Internal calls trust only that authority, so a certificate from anywhere else is
+refused; email still uses the usual public ones. Certificates last about two years and are renewed on
+the next start once fewer than 30 days are left.
+
+- The services answer only HTTPS. Their health checks and Prometheus use it too.
+- The gateway's main port, which browsers use, is still plain HTTP (see "Before production"). Its
+  public key and metrics are on its private management port (8090), which is HTTPS, and the
+  services fetch the key from there.
+- To start over with new certificates, remove the volume: `docker compose down` and then
+  `docker volume rm pract_certs`.
+- Kafka, Elasticsearch, Postgres and Redis are not encrypted yet.
+- Tests and `bootRun` use plain HTTP, as before.
+
 ## What replaced the shared database
 
 The services cannot share a transaction or a foreign key, so these rules are now enforced in code.
@@ -321,9 +339,9 @@ This is set up for local development. Before real use:
   other values in `.env.example`). Kafka checks who signs in but not what each login may do; adding
   ACLs would stop, for example, Filebeat from reading bank events. Kafka also runs as a single broker,
   so it has no second copy of anything.
-- Add TLS between services: passwords travel from the gateway to `auth-service` over plain HTTP, which
-  is only as private as the Docker network. The public keys for internal tokens are fetched the same
-  way, so someone able to tamper with that network could swap in their own.
+- Encrypt the connections to Kafka, Elasticsearch, Postgres and Redis. They require passwords, but
+  these travel over plain connections, which are only as private as the Docker network. The calls
+  between the gateway and the services are already HTTPS.
 
 ## Tests
 

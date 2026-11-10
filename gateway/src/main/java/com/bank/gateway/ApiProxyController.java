@@ -1,6 +1,7 @@
 package com.bank.gateway;
 
 import com.bank.common.idempotency.IdempotencyFilter;
+import com.bank.common.security.InternalTls;
 import com.bank.common.security.InternalTokens;
 import com.bank.common.security.Problems;
 import io.micrometer.tracing.Span;
@@ -47,10 +48,7 @@ public class ApiProxyController {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(CONNECT_TIMEOUT)
-            .build();
+    private final HttpClient httpClient;
     private final InternalTokens tokens;
     private final Tracer tracer;
     private final Propagator propagator;
@@ -58,10 +56,14 @@ public class ApiProxyController {
     private final String accountUrl;
     private final String authUrl;
 
-    ApiProxyController(InternalTokens tokens, Tracer tracer, Propagator propagator,
+    ApiProxyController(InternalTokens tokens, InternalTls tls, Tracer tracer, Propagator propagator,
             @Value("${bank.services.customer-url}") String customerUrl,
             @Value("${bank.services.account-url}") String accountUrl,
             @Value("${bank.services.auth-url}") String authUrl) {
+        this.httpClient = tls.configure(HttpClient.newBuilder())
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(CONNECT_TIMEOUT)
+                .build();
         this.tokens = tokens;
         this.tracer = tracer;
         this.propagator = propagator;

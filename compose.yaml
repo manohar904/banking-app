@@ -21,18 +21,34 @@ x-kafka-client: &kafka-client
     org.apache.kafka.common.security.plain.PlainLoginModule required
     username="bank" password="${KAFKA_BANK_PASSWORD:-kafka_dev_bank_password}";
 
+# Each part's own certificate and key, and the stack's certificate authority, which internal calls
+# trust and nothing else does. Made by the certs step; see certs/make-certs.sh.
+x-tls: &tls
+  SPRING_SSL_BUNDLE_PEM_INTERNAL_KEYSTORE_CERTIFICATE: file:/certs/own/tls.crt
+  SPRING_SSL_BUNDLE_PEM_INTERNAL_KEYSTORE_PRIVATE_KEY: file:/certs/own/tls.key
+  SPRING_SSL_BUNDLE_PEM_INTERNAL_TRUSTSTORE_CERTIFICATE: file:/certs/ca/ca.crt
+
+# Where each part of the bank is reached. Every call between them is HTTPS.
+x-internal-urls: &internal-urls
+  # The gateway's public key comes from its private management port, which is HTTPS too.
+  GATEWAY_KEYS_URL: https://gateway:8090/actuator/jwks
+  CUSTOMER_SERVICE_URL: https://customer-service:8081
+  ACCOUNT_SERVICE_URL: https://account-service:8082
+  AUTH_SERVICE_URL: https://auth-service:8083
+
+x-certs-ready: &certs-ready
+  certs:
+    condition: service_completed_successfully
+
 x-service-env: &service-env
-  <<: *kafka-client
+  <<: [*kafka-client, *tls, *internal-urls]
+  # The services only answer HTTPS.
+  SERVER_SSL_BUNDLE: internal
   DB_HOST: postgres
   DB_PORT: 5432
   # Migrations run in the *-migrate steps, with a login the services do not have.
   SPRING_FLYWAY_ENABLED: "false"
   # Each service signs in to PostgreSQL with its own login; see db-init.
-  # Where the gateway publishes the public key the services check its tokens with.
-  GATEWAY_URL: http://gateway:8080
-  CUSTOMER_SERVICE_URL: http://customer-service:8081
-  ACCOUNT_SERVICE_URL: http://account-service:8082
-  AUTH_SERVICE_URL: http://auth-service:8083
   # One JSON object per log line, which is what Elasticsearch needs.
   LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
   # Where traces go: Tempo, which runs with the monitoring profile. Without it they are dropped.
@@ -69,6 +85,16 @@ services:
       retries: 10
     restart: unless-stopped
     mem_limit: 512m
+
+  # Makes the stack's own certificate authority and a certificate for each part, then stops. Only
+  # makes what is missing or about to expire. See certs/make-certs.sh.
+  certs:
+    image: alpine/openssl:3.5.9
+    entrypoint: ["sh", "/make-certs.sh"]
+    command: [gateway, customer-service, account-service, auth-service]
+    volumes:
+      - ./certs/make-certs.sh:/make-certs.sh:ro
+      - certs:/certs
 
   # Gives each service its own database with two logins: an owner, used only by the migration steps
   # below, and one for the running service. Neither can use another database. Runs on every start, so
@@ -242,8 +268,14 @@ services:
     build:
       context: .
       args: {SERVICE: customer-service}
+    # Its own certificate and key, and the certificate authority. Nothing else's.
+    volumes:
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: customer-service}}
+      - {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
     depends_on:
       customer-migrate:
+        condition: service_completed_successfully
+      certs:
         condition: service_completed_successfully
     environment:
       <<: *service-env
@@ -257,7 +289,7 @@ services:
       MAIL_PASSWORD: ${ALERT_SMTP_PASSWORD:-}
       MAIL_FROM: ${ALERT_EMAIL_FROM:-${ALERT_SMTP_USERNAME:-}}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/actuator/health"]
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O /dev/null https://localhost:8081/actuator/health"]
       interval: 10s
       timeout: 3s
       retries: 6
@@ -268,8 +300,14 @@ services:
     build:
       context: .
       args: {SERVICE: account-service}
+    # Its own certificate and key, and the certificate authority. Nothing else's.
+    volumes:
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: account-service}}
+      - {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
     depends_on:
       account-migrate:
+        condition: service_completed_successfully
+      certs:
         condition: service_completed_successfully
     environment:
       <<: *service-env
@@ -279,7 +317,7 @@ services:
       DB_USERNAME: account_service
       DB_PASSWORD: ${ACCOUNT_DB_PASSWORD:-account_dev_db_password}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8082/actuator/health"]
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O /dev/null https://localhost:8082/actuator/health"]
       interval: 10s
       timeout: 3s
       retries: 6
@@ -290,8 +328,14 @@ services:
     build:
       context: .
       args: {SERVICE: auth-service}
+    # Its own certificate and key, and the certificate authority. Nothing else's.
+    volumes:
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: auth-service}}
+      - {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
     depends_on:
       auth-migrate:
+        condition: service_completed_successfully
+      certs:
         condition: service_completed_successfully
     environment:
       <<: *service-env
@@ -310,7 +354,7 @@ services:
       MAIL_FROM: ${ALERT_EMAIL_FROM:-${ALERT_SMTP_USERNAME:-}}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:${APP_PORT:-8080}}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8083/actuator/health"]
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O /dev/null https://localhost:8083/actuator/health"]
       interval: 10s
       timeout: 3s
       retries: 6
@@ -321,6 +365,10 @@ services:
     build:
       context: .
       args: {SERVICE: gateway}
+    # Its own certificate and key, and the certificate authority. Nothing else's.
+    volumes:
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: gateway}}
+      - {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
     depends_on:
       customer-service:
         condition: service_healthy
@@ -331,11 +379,10 @@ services:
       redis:
         condition: service_healthy
     environment:
-      <<: *kafka-client
-      GATEWAY_URL: http://gateway:8080
-      CUSTOMER_SERVICE_URL: http://customer-service:8081
-      ACCOUNT_SERVICE_URL: http://account-service:8082
-      AUTH_SERVICE_URL: http://auth-service:8083
+      <<: [*kafka-client, *tls, *internal-urls]
+      # The main port, for browsers, stays plain HTTP here; see README.md, "Before production".
+      # The private management port, with metrics and the public key, is HTTPS.
+      MANAGEMENT_SERVER_SSL_BUNDLE: internal
       LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
       MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: ${TRACING_ENDPOINT:-http://tempo:4318/v1/traces}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
@@ -488,6 +535,9 @@ services:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
+      # To check the certificates of the services it collects metrics from.
+      - {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
+    depends_on: *certs-ready
     restart: unless-stopped
     mem_limit: 384m
 
@@ -572,3 +622,5 @@ volumes:
   alertmanager-data:
   grafana-data:
   tempo-data:
+  # The stack's certificate authority and certificates. See certs/make-certs.sh.
+  certs:

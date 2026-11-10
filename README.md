@@ -245,14 +245,27 @@ has gone away. Going on holiday or doing maintenance? Silence alerts at http://l
 
 ## Database logins
 
-Each service signs in to PostgreSQL with its own login (`customer_service`, `account_service`,
-`auth_service`), which owns that service's database and cannot connect to any other. The main user
-(`DB_USERNAME`, `bank` by default) is used only by `db-init` and the backups.
+Each service's database has two logins of its own, and neither can connect to any other database:
 
-`db-init` sets this up on every start, so `up` brings an older database up to date by itself: it creates
-the logins, sets their passwords from `.env`, and hands each service the tables the main user created
-before. To change a password, set it in `.env` and run `docker compose up -d`. Restoring a backup runs
-`db-init` again before the services start.
+| Login | Used by | May |
+|---|---|---|
+| `customer_owner`, `account_owner`, `auth_owner` | the `*-migrate` steps only | own the database and change its tables |
+| `customer_service`, `account_service`, `auth_service` | the running service | read and write rows; add to and read the audit log |
+
+The services never get the owner passwords, so one that is broken into cannot change or drop its
+tables, empty them with `TRUNCATE`, or remove the trigger that protects the audit log. It cannot change
+or delete audit log rows either way. The main user (`DB_USERNAME`, `bank` by default) is used only by
+`db-init` and the backups.
+
+On every `up`, `db-init` creates the logins, sets their passwords from `.env` and hands each owner
+anything in its database that someone else owns. Then each `*-migrate` step runs that service's
+migrations with Flyway (the same version the services' tests use), and grants the service's login its
+rights again (`db-init/after-migrate/afterMigrate.sql`). Only then do the services start. So `up`
+brings an older database up to date by itself. To change a password, set it in `.env` and run
+`docker compose up -d`. Restoring a backup runs `db-init` and the migration steps again before the
+services start.
+
+The services still run their migrations themselves in tests, where there is only one login.
 
 ## Backups
 
@@ -283,18 +296,15 @@ working.
 
 This is set up for local development. Before real use:
 
-- Set your own `DB_PASSWORD`, `CUSTOMER_DB_PASSWORD`, `ACCOUNT_DB_PASSWORD`,
-  `AUTH_DB_PASSWORD`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and `SESSION_COOKIE_SECURE=true`, and
-  serve the gateway over HTTPS.
+- Set your own `DB_PASSWORD`, the six `*_DB_PASSWORD` and `*_DB_OWNER_PASSWORD` values,
+  `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` and `SESSION_COOKIE_SECURE=true`, and serve the gateway
+  over HTTPS.
 - Turn on security in Elasticsearch, Kibana and Kafka. They have no passwords here, and are only safe
   because they are published to this computer alone. Kafka also runs as a single broker, so it has no
   second copy of anything.
 - Add TLS between services: passwords travel from the gateway to `auth-service` over plain HTTP, which
   is only as private as the Docker network. The public keys for internal tokens are fetched the same
   way, so someone able to tamper with that network could swap in their own.
-- Each service owns its own tables, so a compromised service could still turn off its audit log's
-  protection against changes. A separate login for migrations, with the service itself only allowed
-  to read and write rows, would close that.
 
 ## Tests
 

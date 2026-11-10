@@ -2,4 +2,7 @@
 spring:
   datasource:
     password: ${DB_PASSWORD:auth_dev_db_password}
+  # The *-migrate steps in compose.yaml run the migrations, as the owner. This login cannot.
+  flyway:
+    enabled: false
 

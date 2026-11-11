@@ -11,13 +11,13 @@ alerting:
         - targets: ["alertmanager:9093"]
 
 scrape_configs:
-  # Kafka can't report that it is down, so this checks from outside that it accepts connections.
+  # Kafka can't report that it is down, so this checks from outside that each broker accepts connections.
   - job_name: kafka-probe
     metrics_path: /probe
     params:
       module: [tcp_connect]
     static_configs:
-      - targets: ["kafka:9092"]
+      - targets: ["kafka-1:9092", "kafka-2:9092", "kafka-3:9092"]
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target

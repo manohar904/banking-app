@@ -35,7 +35,7 @@ Trusting it means your computer accepts anything signed with the authority's key
 the stack.
 
 To run a service from the IDE or Gradle instead, start the database, Kafka and Redis with
-`docker compose up -d customer-migrate account-migrate auth-migrate kafka redis`,
+`docker compose up -d customer-migrate account-migrate auth-migrate kafka-1 kafka-2 kafka-3 redis`,
 then `.\gradlew.bat :customer-service:bootRun`, and likewise for the others.
 
 ## How a request travels
@@ -78,8 +78,9 @@ the next start once fewer than 30 days are left.
   its private management port (8090), also HTTPS, and the services fetch the key from there.
 - To start over with new certificates, remove the volume: `docker compose down` and then
   `docker volume rm pract_certs`.
-- Kafka is encrypted too inside the Docker network (`kafka:9092`). The port published to this
-  computer alone (9094), for running a service from the IDE, is not: that traffic never leaves it.
+- Kafka is encrypted too inside the Docker network (`kafka-1:9092` and so on), also between its
+  brokers. The ports published to this computer alone (9094 to 9096), for running a service from the
+  IDE, are not: that traffic never leaves it.
 - Elasticsearch answers only HTTPS, so Kibana, Logstash and Grafana use it too. In a browser it is
   https://localhost:9200, which warns about the certificate because the browser does not know the
   stack's authority.
@@ -251,7 +252,7 @@ Kafka and Elasticsearch ask everyone to sign in, each with a login of its own th
 | `bank` | Kafka | the four apps | send events and heartbeats; read events (for emails) |
 | `filebeat` | Kafka | Filebeat | send log lines |
 | `logstash` | Kafka | Logstash | read logs, events and heartbeats |
-| `admin` | Kafka | Kafka itself, and its health check | anything |
+| `admin` | Kafka | the brokers, among themselves, and their health check | anything |
 | `elastic` | Elasticsearch, Kibana | you, and the setup scripts | anything |
 | `kibana_system` | Elasticsearch | Kibana | what Kibana needs |
 | `logstash_bank` | Elasticsearch | Logstash | create and write only the `bank-*` indices |
@@ -259,7 +260,7 @@ Kafka and Elasticsearch ask everyone to sign in, each with a login of its own th
 
 Their passwords have local defaults; set your own in `.env` (see `.env.example`), then run
 `docker compose --profile monitoring up -d`. The Elasticsearch passwords must not contain `"` or `\`.
-Both enforce the "May" column. For Kafka, `kafka-setup` writes the rules (`kafka/setup-acls.sh`) on
+Both enforce the "May" column. For Kafka, `kafka-setup` writes the rules (`kafka/setup.sh`) on
 every start, and Kafka refuses anything they do not allow: Filebeat cannot read bank events, Logstash
 cannot write anything, and the apps cannot read the logs. The four apps share the `bank` login, so
 each of them may also read events, which only customer-service does (for transaction emails).
@@ -282,7 +283,13 @@ the background.
 | `bank.health` | A heartbeat from every service every 30 seconds | Each service |
 | `bank.logs` | Every service's log lines | Filebeat |
 
-Logstash copies all three into Elasticsearch, which keeps 14 days. Kafka keeps 7 days.
+Logstash copies all three into Elasticsearch, which keeps 14 days. Kafka keeps 7 days. `kafka-setup`
+makes the topics, each with one partition, so events stay in the order they were sent.
+
+**Kafka runs as three brokers** (`kafka-1`, `kafka-2`, `kafka-3`), and each topic has a copy on all
+three. Kafka counts a write once two copies have it, so it keeps working, and loses nothing it
+confirmed, while any one broker is down. With two down it refuses writes until one is back; the
+services' events then wait, as below. The three take about 1.9 GB of memory together.
 
 **Events can't get out of step with the data.** A service writes an event to its own `outbox_events`
 table in the same transaction as the change, and a background job then sends it to Kafka. So if Kafka is
@@ -303,10 +310,12 @@ because they get copied to Kafka and Elasticsearch.
    ```
    It should arrive within about a minute. If not, `docker compose logs alertmanager` says why.
 
-The alerts are `ServiceDown`, `ServiceUnhealthy`, `KafkaDown`, `HighErrorRate`, `EventsNotReachingKafka`,
+The alerts are `ServiceDown`, `ServiceUnhealthy`, `KafkaBrokerDown`, `KafkaDown`, `HighErrorRate`, `EventsNotReachingKafka`,
 `BackupFailed`, `BackupTooOld`
-and `ManyFailedSignIns`. `KafkaDown` only checks that Kafka accepts connections, so a broker that accepts
-them but has stopped working shows up later, as `EventsNotReachingKafka`.
+and `ManyFailedSignIns`. `KafkaBrokerDown` means one broker can't be reached: Kafka still works, but
+bring it back. `KafkaDown` means fewer than two can, so Kafka takes no events. Both only check that the
+brokers accept connections, so one that accepts them but has stopped working shows up later, as
+`EventsNotReachingKafka`.
 
 You get one email per problem and service, a reminder every 4 hours while it lasts, and another when it
 has gone away. Going on holiday or doing maintenance? Silence alerts at http://localhost:9093.
@@ -368,8 +377,8 @@ This is set up for local development. Before real use:
   `REDIS_PASSWORD` and `GRAFANA_ADMIN_PASSWORD`. Give the gateway a certificate for its real domain
   name from a public authority, and turn on HSTS there.
 - Set your own passwords for Kafka and Elasticsearch (the `KAFKA_*_PASSWORD`, `ELASTIC_PASSWORD` and
-  other values in `.env.example`). Kafka also runs as a single broker, so it has no second copy of
-  anything.
+  other values in `.env.example`). Kafka's three brokers run on one computer here; on real servers,
+  put each on its own machine, or one machine failing still takes all three down.
 
 ## Tests
 

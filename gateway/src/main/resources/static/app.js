@@ -3,7 +3,8 @@
 const CUSTOMER_PAGE_SIZE = 20;
 const TRANSACTION_PAGE_SIZE = 10;
 const AUDIT_PAGE_SIZE = 25;
-const AUDIT_SOURCES = { accounts: "Accounts and money", customers: "Customers", auth: "Sign-ins and passwords" };
+const HELP_PAGE_SIZE = 20;
+const AUDIT_SOURCES = { accounts: "Accounts and money", customers: "Customers and help", auth: "Sign-ins and passwords" };
 // Matches the API: at most 17 whole digits and 2 decimals.
 const AMOUNT_PATTERN = /^\d{1,17}(\.\d{1,2})?$/;
 
@@ -24,6 +25,7 @@ function resetState() {
     detailError: null,
     audit: null,
     findAccount: false,
+    help: null,
   });
 }
 
@@ -176,6 +178,7 @@ async function reloadCustomersAfterDelete() {
 /** Each service keeps its own log, so one is shown at a time. That also keeps real page numbers. */
 async function openAuditLog(source = "accounts", page = 0) {
   state.findAccount = false;
+  state.help = null;
   const version = ++selectionVersion;
   let audit = { source, entries: { content: [], page: null }, actors: {} };
   let failure = null;
@@ -216,6 +219,7 @@ function closeCustomer() {
 async function selectCustomer(id) {
   state.findAccount = false;
   state.audit = null;
+  state.help = null;
   const version = ++selectionVersion;
   try {
     const [customer, accounts] = await Promise.all([
@@ -291,7 +295,9 @@ function welcomePanel() {
       el("button", { type: "button", class: "welcome-tile tile-money", onclick: openFindAccount },
         el("strong", {}, "Money"), el("span", {}, "Deposit, withdraw and transfer.")),
       el("button", { type: "button", class: "welcome-tile tile-audit", onclick: () => openAuditLog() },
-        el("strong", {}, "Audit log"), el("span", {}, "See who changed what, and when."))));
+        el("strong", {}, "Audit log"), el("span", {}, "See who changed what, and when.")),
+      el("button", { type: "button", class: "welcome-tile tile-help", onclick: () => openHelp() },
+        el("strong", {}, "Help requests"), el("span", {}, "Answer customers' questions."))));
 }
 
 /** The Customers tile: the first customer in the list, or the New customer form if there are none. */
@@ -309,6 +315,7 @@ function openFindAccount() {
   selectionVersion++;
   state.findAccount = true;
   state.audit = null;
+  state.help = null;
   state.customer = null;
   state.account = null;
   state.detailError = null;
@@ -368,6 +375,7 @@ function findAccountPanel() {
 function auditBadgeClass(action) {
   if (action.startsWith("MONEY") || action.startsWith("TRANSFER")) return "badge-money";
   if (action.startsWith("LOGIN") || action.startsWith("PASSWORD")) return "badge-security";
+  if (action.startsWith("HELP")) return "badge-records";
   return "badge-records";
 }
 
@@ -393,6 +401,10 @@ function renderCustomers() {
 function renderDetail() {
   const detail = $("detail");
   const error = state.detailError ? el("p", { class: "banner-error", role: "alert" }, state.detailError) : null;
+  if (state.help) {
+    detail.replaceChildren(...[error, helpPanel()].filter(Boolean));
+    return;
+  }
   if (state.audit) {
     detail.replaceChildren(...[error, auditPanel()].filter(Boolean));
     return;
@@ -630,6 +642,248 @@ function accountPanel() {
     pager(transactions.page, (next) => selectAccount(account.id, next)));
 }
 
+/* ---------- Help ---------- */
+
+const HELP_FILTERS = {
+  WAITING_FOR_BANK: "Waiting for an answer",
+  ANSWERED: "Answered",
+  CLOSED: "Closed",
+  ALL: "All",
+};
+
+/** The same question reads differently for each side: "waiting" means waiting for the bank. */
+function helpStatusBadge(status) {
+  const text = {
+    WAITING_FOR_BANK: isStaff() ? "Needs an answer" : "Waiting for the bank",
+    ANSWERED: "Answered",
+    CLOSED: "Closed",
+  }[status];
+  const kind = { WAITING_FOR_BANK: "badge-security", ANSWERED: "badge-money", CLOSED: "badge-off" }[status];
+  return el("span", { class: `badge ${kind}` }, text);
+}
+
+const FAQ = [
+  ["How do I send money to someone?",
+    "Open your account, enter the 12-digit number of the account you are paying and the amount, and press Transfer. The money arrives straight away."],
+  ["How much can I send in a day?",
+    "Your daily transfer limit, and how much of it is left today, are shown under the transfer form. The limit starts again at midnight."],
+  ["I forgot my password.",
+    "Sign out, then choose \"Forgot password?\" on the sign-in page. We email you a link that works once, for 30 minutes."],
+  ["How do I change my password?",
+    "Choose \"Change password\" at the top of the page. Use at least 12 characters."],
+  ["How do I open another account?",
+    "The bank opens accounts for you. Ask us below and say whether you would like a checking or a savings account."],
+  ["Why didn't I get an email about a payment?",
+    "Your page shows whether transaction emails are on. They can take a few minutes, and may land in your spam folder."],
+  ["I think someone else knows my password.",
+    "Change it straight away with \"Change password\", then tell us below so we can check your accounts."],
+];
+
+async function openHelp(filter = state.help?.filter ?? "WAITING_FOR_BANK", page = 0) {
+  state.findAccount = false;
+  state.audit = null;
+  const version = ++selectionVersion;
+  const status = isStaff() && filter !== "ALL" ? `&status=${filter}` : "";
+  let requests = { content: [], page: null };
+  let failure = null;
+  try {
+    requests = await api(`/api/help-requests?page=${page}&size=${HELP_PAGE_SIZE}${status}`);
+  } catch (error) {
+    failure = error.message;
+  }
+  if (version !== selectionVersion) return;
+  state.help = { filter, page, requests, request: null };
+  if (isStaff()) {
+    state.customer = null;
+    state.account = null;
+  }
+  state.detailError = failure;
+  renderCustomers();
+  renderDetail();
+}
+
+async function openHelpRequest(id) {
+  const version = selectionVersion;
+  try {
+    const request = await api(`/api/help-requests/${id}`);
+    if (version !== selectionVersion || !state.help) return;
+    state.help.request = request;
+    state.detailError = null;
+  } catch (error) {
+    state.detailError = error.message;
+  }
+  renderDetail();
+}
+
+/** A customer goes back to their own page; staff to the welcome screen. */
+function closeHelp() {
+  selectionVersion++;
+  state.help = null;
+  state.detailError = null;
+  renderDetail();
+}
+
+function backToHelpList() {
+  openHelp(state.help.filter, state.help.page);
+}
+
+function helpPanel() {
+  const { request } = state.help;
+  return request ? helpConversationPanel(request) : helpOverviewPanel();
+}
+
+function helpOverviewPanel() {
+  const { requests, filter } = state.help;
+  const items = requests.content.map((request) => el("li", {},
+    el("button", { type: "button", class: "help-item", onclick: () => openHelpRequest(request.id) },
+      el("span", {},
+        request.subject,
+        el("small", {}, [
+          isStaff() ? request.customerName ?? `Customer ${request.customerId}` : null,
+          `last activity ${dateFormat.format(new Date(request.updatedAt))}`,
+        ].filter(Boolean).join(" · "))),
+      helpStatusBadge(request.status))));
+  const list = items.length
+    ? el("ul", { class: "help-list" }, ...items)
+    : el("p", { class: "empty" }, isStaff() ? "No questions here." : "You haven't asked us anything yet.");
+  const pages = pager(requests.page, (next) => openHelp(filter, next));
+
+  if (isStaff()) {
+    const select = el("select", { name: "filter", "aria-label": "Which questions" },
+      ...Object.entries(HELP_FILTERS).map(([value, label]) => el("option", { value }, label)));
+    select.value = filter;
+    select.onchange = () => openHelp(select.value);
+    return el("div", { class: "panel" },
+      el("div", { class: "panel-head" },
+        el("div", {},
+          el("h2", {}, "Help requests"),
+          el("p", { class: "muted" }, "Customers' questions, most recent activity first.")),
+        el("button", { type: "button", onclick: closeHelp }, "Close")),
+      el("label", { class: "help-filter" }, "Show", select),
+      list,
+      pages);
+  }
+
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-head" },
+      el("div", {},
+        el("h2", {}, "Help"),
+        el("p", { class: "muted" }, "Answers to common questions, or ask us your own.")),
+      el("button", { type: "button", onclick: closeHelp }, "Close")),
+    el("h3", { class: "spaced-top" }, "Common questions"),
+    el("div", { class: "faq" }, ...FAQ.map(([question, answer]) =>
+      el("details", {}, el("summary", {}, question), el("p", {}, answer)))),
+    el("h3", { class: "spaced-top" }, "Ask us a question"),
+    el("p", { class: "muted" }, "We answer here, and you'll see our reply on this page. Never send us your password."),
+    askForm(),
+    el("h3", { class: "spaced-top" }, "Your questions"),
+    list,
+    pages);
+}
+
+function askForm() {
+  const subject = el("input", { name: "subject", maxlength: "120", autocomplete: "off" });
+  const subjectError = el("span", { class: "field-error" });
+  const message = el("textarea", { name: "message", maxlength: "2000", rows: "4" });
+  const messageError = el("span", { class: "field-error" });
+  const formError = el("p", { class: "form-error", role: "alert", hidden: "" });
+  const send = el("button", { type: "submit", class: "primary" }, "Send question");
+
+  const submit = async () => {
+    subjectError.textContent = subject.value.trim() ? "" : "Say what it is about.";
+    messageError.textContent = message.value.trim() ? "" : "Write your question.";
+    formError.hidden = true;
+    if (subjectError.textContent || messageError.textContent) return;
+    send.disabled = true;
+    try {
+      const created = await api("/api/help-requests", {
+        method: "POST",
+        body: { subject: subject.value.trim(), message: message.value.trim() },
+      });
+      toast("Question sent. We'll answer here.");
+      await openHelp();
+      await openHelpRequest(created.id);
+      return;
+    } catch (error) {
+      subjectError.textContent = error.fieldErrors.subject ?? "";
+      messageError.textContent = error.fieldErrors.message ?? "";
+      if (!error.fieldErrors.subject && !error.fieldErrors.message) {
+        formError.textContent = error.message;
+        formError.hidden = false;
+      }
+    }
+    send.disabled = false;
+  };
+
+  return el("form", { class: "help-form", novalidate: "", onsubmit: (event) => { event.preventDefault(); submit(); } },
+    formError,
+    el("label", {}, "Subject", subject, subjectError),
+    el("label", {}, "Your question", message, messageError),
+    el("div", { class: "actions" }, send));
+}
+
+function helpConversationPanel(request) {
+  const closed = request.status === "CLOSED";
+  const messages = request.messages.map((message) => {
+    const customer = isStaff() ? request.customerName ?? "Customer" : "You";
+    const author = message.fromBank ? (isStaff() ? "Bank staff" : "The bank") : customer;
+    return el("div", { class: `message ${message.fromBank ? "message-from-bank" : "message-from-customer"}` },
+      el("small", {}, `${author} · ${dateFormat.format(new Date(message.createdAt))}`),
+      el("p", {}, message.body));
+  });
+
+  const reply = el("textarea", { name: "message", maxlength: "2000", rows: "3" });
+  const replyError = el("span", { class: "field-error", role: "alert" });
+  const send = el("button", { type: "submit", class: "primary" }, isStaff() ? "Send answer" : "Send");
+
+  const submit = async () => {
+    if (!reply.value.trim()) {
+      replyError.textContent = "Write a message first.";
+      return;
+    }
+    replyError.textContent = "";
+    send.disabled = true;
+    try {
+      state.help.request = await api(`/api/help-requests/${request.id}/messages`, {
+        method: "POST",
+        body: { message: reply.value.trim() },
+      });
+      state.detailError = null;
+      toast("Message sent.");
+      renderDetail();
+      return;
+    } catch (error) {
+      replyError.textContent = error.fieldErrors.message ?? error.message;
+    }
+    send.disabled = false;
+  };
+
+  const close = () => openConfirm("Close question", "Close this question? Nobody can reply to it after that.", async () => {
+    state.help.request = await api(`/api/help-requests/${request.id}/close`, { method: "POST" });
+    state.detailError = null;
+    renderDetail();
+    toast("Question closed.");
+  }, "Close question");
+
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-head" },
+      el("div", {},
+        el("h2", {}, request.subject),
+        el("p", { class: "muted" },
+          isStaff() && request.customerName ? `${request.customerName} · ` : "",
+          helpStatusBadge(request.status))),
+      el("div", { class: "button-row" },
+        isStaff() ? el("button", { type: "button", onclick: () => selectCustomer(request.customerId) }, "Open customer") : null,
+        closed ? null : el("button", { type: "button", class: "danger", onclick: close }, "Close question"),
+        el("button", { type: "button", onclick: backToHelpList }, "Back"))),
+    el("div", { class: "conversation" }, ...messages),
+    closed
+      ? el("p", { class: "empty" }, isStaff() ? "This question is closed." : "This question is closed. Ask a new one if you need more help.")
+      : el("form", { class: "help-form", novalidate: "", onsubmit: (event) => { event.preventDefault(); submit(); } },
+          el("label", {}, isStaff() ? "Answer" : "Reply", reply, replyError),
+          el("div", { class: "actions" }, send)));
+}
+
 /* ---------- Dialogs ---------- */
 
 function showFormError(form, message) {
@@ -704,8 +958,9 @@ function openPasswordDialog() {
 
 let confirmAction = null;
 
-function openConfirm(title, message, action) {
+function openConfirm(title, message, action, confirmLabel = "Delete") {
   $("confirm-title").textContent = title;
+  $("confirm-form").querySelector('[type="submit"]').textContent = confirmLabel;
   $("confirm-message").textContent = message;
   showFormError($("confirm-form"), null);
   confirmAction = action;
@@ -816,6 +1071,7 @@ $("login-form").onsubmit = async (event) => {
 };
 
 $("audit-log").onclick = () => openAuditLog();
+$("help").onclick = () => openHelp();
 
 $("sign-out").onclick = async () => {
   try {

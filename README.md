@@ -189,6 +189,20 @@ customer's page. Customers can see the setting but not change it. They use the s
 emails arrive late if Kafka is down. Failed sends are retried for about an hour, a repeated event doesn't
 send a second email, and turning this on doesn't email anyone about earlier transactions.
 
+### Help
+
+Everyone has a **Help** button. Customers see answers to common questions and can ask the bank their
+own; staff see every customer's questions (also from the **Help requests** tile), newest activity first,
+and answer them. Either side can close a question, after which nobody can reply to it. Customers see
+staff answers as from "the bank"; which member of staff wrote each one is still stored.
+
+The API is `/api/help-requests` in `customer-service`: `POST` asks (customers only), `GET` lists (a
+customer's own, or for staff everyone's, filtered with `status=WAITING_FOR_BANK`, `ANSWERED` or `CLOSED`),
+and `/{id}`, `/{id}/messages` and `/{id}/close` read, reply and close. A customer gets a 404 for anyone
+else's question. Each customer may have 5 open questions at a time; subjects are up to 120 characters and
+messages up to 2000. Deleting a customer deletes their questions. Events and the audit log record only
+ids (`HELP_REQUEST_OPENED`, `HELP_MESSAGE_SENT`, `HELP_REQUEST_CLOSED`), never what was written.
+
 ### Availability
 
 A service being down now only affects what needs it. Accounts can still be read if `customer-service`

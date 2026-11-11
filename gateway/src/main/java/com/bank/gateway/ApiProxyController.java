@@ -142,7 +142,8 @@ public class ApiProxyController {
         if (path.startsWith("/api/auth/") || CUSTOMER_LOGIN.matcher(path).matches()) {
             return authUrl;
         }
-        if (path.equals("/api/customers") || path.startsWith("/api/customers/")) {
+        if (path.equals("/api/customers") || path.startsWith("/api/customers/")
+                || path.equals("/api/help-requests") || path.startsWith("/api/help-requests/")) {
             return customerUrl;
         }
         if (path.equals("/api/accounts") || path.startsWith("/api/accounts/")) {

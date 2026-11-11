@@ -23,6 +23,7 @@ import com.bank.customer.AuthServiceClient;
 import com.bank.customer.TransactionEmails;
 import com.jayway.jsonpath.JsonPath;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -41,6 +42,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.mail.MailSendException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -100,6 +102,9 @@ class CustomerApiIntegrationTest {
 
     @Autowired
     private TransactionEmails transactionEmails;
+
+    @Autowired
+    private ConcurrentKafkaListenerContainerFactory<?, ?> kafkaListeners;
 
     @Test
     void migrationsApplyToAnEmptyDatabase() {
@@ -503,6 +508,13 @@ class CustomerApiIntegrationTest {
         Number id = JsonPath.read(postCustomer(email).andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString(), "$.id");
         return id.longValue();
+    }
+
+    @Test
+    void emailReaderKeepsTryingWhenKafkaRefusesIt() {
+        // Without this a refusal, as on a new Kafka before kafka-setup has run, stops it for good.
+        assertThat(kafkaListeners.getContainerProperties().getAuthExceptionRetryInterval())
+                .isEqualTo(Duration.ofSeconds(10));
     }
 
     private ResultActions postCustomer(String email) throws Exception {

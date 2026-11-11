@@ -25,6 +25,11 @@ spring:
         max.block.ms: 5000
         request.timeout.ms: 5000
         delivery.timeout.ms: 10000
+    listener:
+      # Kafka refuses the email reader until kafka-setup has written the access rules, which on a
+      # new Kafka can be just after this service starts. Without this, that first refusal stops the
+      # reader for good, and no transaction emails go out until the service is restarted.
+      auth-exception-retry-interval: 10s
   task:
     scheduling:
       pool:

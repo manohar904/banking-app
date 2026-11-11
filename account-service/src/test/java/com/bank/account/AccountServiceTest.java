@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.bank.account.loan.LoanRepository;
 import com.bank.common.ConflictException;
 import com.bank.common.events.DomainEvents;
 import java.math.BigDecimal;
@@ -43,6 +44,9 @@ class AccountServiceTest {
 
     @Mock
     private DomainEvents events;
+
+    @Mock
+    private LoanRepository loanRepository;
 
     @InjectMocks
     private AccountService accountService;

@@ -58,6 +58,10 @@ public class AccountTransaction {
     @Column(updatable = false, length = 12)
     private String counterpartyAccountNumber;
 
+    /** The loan paid out or repaid. Empty for everything else. */
+    @Column(updatable = false)
+    private Long loanId;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -69,6 +73,12 @@ public class AccountTransaction {
         this.transferId = transferId;
         this.counterpartyAccountNumber = counterpartyAccountNumber;
         this.byCustomer = byCustomer;
+    }
+
+    /** A loan paid out or repaid. As with the constructor below, call after the balance has changed. */
+    public AccountTransaction(Account account, TransactionType type, BigDecimal amount, Long loanId) {
+        this(account, type, amount);
+        this.loanId = loanId;
     }
 
     /** Call after the balance has changed, so that balanceAfter captures the new balance. */

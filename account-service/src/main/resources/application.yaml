@@ -48,3 +48,10 @@ bank:
     customer-daily-limit: ${CUSTOMER_DAILY_TRANSFER_LIMIT:1000.00}
     # The day starts at midnight here.
     time-zone: ${TRANSFER_LIMIT_TIMEZONE:UTC}
+  loans:
+    # Percent a year, fixed for each loan when it is asked for. Changing it doesn't change existing loans.
+    annual-interest-rate: ${LOAN_ANNUAL_INTEREST_RATE:9.50}
+    min-amount: 100.00
+    max-amount: 50000.00
+    min-months: 6
+    max-months: 60

@@ -382,11 +382,15 @@ class CustomerApiIntegrationTest {
         deliver("MONEY_WITHDRAWN", customer, "1.50", "2.00");
         deliver("TRANSFER_SENT", customer, "3.00", "4.00");
         deliver("TRANSFER_RECEIVED", customer, "5.00", "6.00");
+        deliver("LOAN_PAID_OUT", customer, "1000.00", "1006.00");
+        deliver("LOAN_REPAYMENT_TAKEN", customer, "87.69", "918.31");
 
         assertThat(emailsTo(email)).extracting(SimpleMailMessage::getSubject).containsExactlyInAnyOrder(
                 "Withdrawal of 1.50 from your account ending 7265",
                 "Transfer of 3.00 from your account ending 7265",
-                "Transfer of 5.00 to your account ending 7265");
+                "Transfer of 5.00 to your account ending 7265",
+                "Loan of 1,000.00 paid into your account ending 7265",
+                "Loan repayment of 87.69 from your account ending 7265");
     }
 
     @Test

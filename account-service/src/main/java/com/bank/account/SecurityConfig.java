@@ -20,6 +20,13 @@ class SecurityConfig {
         return ServiceSecurity.build(http, decoder, requests -> requests
                 .requestMatchers(HttpMethod.GET, "/api/accounts", "/api/accounts/**").hasAnyRole(ServiceSecurity.PEOPLE)
                 .requestMatchers(HttpMethod.POST, "/api/accounts/*/transfer").hasAnyRole(ServiceSecurity.PEOPLE)
-                .requestMatchers("/api/accounts", "/api/accounts/**").hasRole("STAFF"));
+                .requestMatchers("/api/accounts", "/api/accounts/**").hasRole("STAFF")
+                // Loans: customers ask and may cancel their own request; staff decide; both read and
+                // repay. LoanService checks that a customer only touches their own loans.
+                .requestMatchers(HttpMethod.GET, "/api/loans", "/api/loans/**").hasAnyRole(ServiceSecurity.PEOPLE)
+                .requestMatchers(HttpMethod.POST, "/api/loans", "/api/loans/*/cancel").hasRole("CUSTOMER")
+                .requestMatchers(HttpMethod.POST, "/api/loans/*/approve", "/api/loans/*/reject").hasRole("STAFF")
+                .requestMatchers(HttpMethod.POST, "/api/loans/*/repay", "/api/loans/*/pay-off")
+                .hasAnyRole(ServiceSecurity.PEOPLE));
     }
 }

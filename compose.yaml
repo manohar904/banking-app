@@ -1,7 +1,7 @@
 # Local development stack. The default passwords and secrets are for local use only.
 # The bank:        docker compose up -d --build
 # With monitoring: docker compose --profile monitoring up -d --build    (adds about 4 GB; see README.md)
-# Database only:   docker compose up -d customer-migrate account-migrate auth-migrate kafka redis
+# Database only:   docker compose up -d customer-migrate account-migrate auth-migrate kafka-1 kafka-2 kafka-3 redis
 #                     (then .\gradlew.bat :<service>:bootRun for each service)
 #
 # Only the gateway is published. The services can be reached only from inside this network.
@@ -15,7 +15,7 @@ x-service: &service
 # How the bank's apps sign in to Kafka, over TLS that trusts only the stack's certificate authority
 # (the "internal" bundle in x-tls). The tests use a plain Kafka without sign-in, so this lives here.
 x-kafka-client: &kafka-client
-  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
   SPRING_KAFKA_SECURITY_PROTOCOL: SASL_SSL
   SPRING_KAFKA_SSL_BUNDLE: internal
   SPRING_KAFKA_PROPERTIES_SASL_MECHANISM: PLAIN
@@ -49,6 +49,80 @@ x-postgres-tls: &postgres-tls
 x-certs-ready: &certs-ready
   certs:
     condition: service_completed_successfully
+
+# What the three Kafka brokers (kafka-1, kafka-2, kafka-3) share. Each is also a controller: the three
+# agree among themselves which broker leads each topic, so Kafka keeps working while any two are up.
+x-kafka-node: &kafka-node
+  image: apache/kafka:4.3.2
+  environment: &kafka-env
+    # The same on all three, or they would not form one cluster.
+    CLUSTER_ID: Opnhz-4lS26-p7zJNWx-uA
+    KAFKA_PROCESS_ROLES: broker,controller
+    KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    # Everyone must sign in (SASL/PLAIN). Inside the Docker network that is also encrypted (SASL_SSL),
+    # both between the brokers and for everyone else. The port each broker publishes to this computer
+    # alone, for running a service from the IDE, is not: that never leaves the machine.
+    KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:SASL_SSL,CONTROLLER:SASL_SSL,EXTERNAL:SASL_PLAINTEXT
+    KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+    KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+    KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+    KAFKA_SASL_MECHANISM_CONTROLLER_PROTOCOL: PLAIN
+    # Each login may only do what kafka/setup.sh allows; anything else is refused. "admin" is the
+    # brokers themselves.
+    KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+    KAFKA_SUPER_USERS: User:admin
+    KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+    # Its certificate, from the certs step, and the certificate authority it trusts.
+    KAFKA_SSL_KEYSTORE_TYPE: PEM
+    KAFKA_SSL_KEYSTORE_LOCATION: /certs/own/tls.pem
+    KAFKA_SSL_TRUSTSTORE_TYPE: PEM
+    KAFKA_SSL_TRUSTSTORE_LOCATION: /certs/ca/ca.crt
+    # Who may sign in. "admin" is the brokers themselves; the rest are the bank's apps, Filebeat and
+    # Logstash. Only the brokers use the controller port.
+    KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG: &kafka-users >-
+      org.apache.kafka.common.security.plain.PlainLoginModule required
+      username="admin" password="${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}"
+      user_admin="${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}"
+      user_bank="${KAFKA_BANK_PASSWORD:-kafka_dev_bank_password}"
+      user_filebeat="${KAFKA_FILEBEAT_PASSWORD:-kafka_dev_filebeat_password}"
+      user_logstash="${KAFKA_LOGSTASH_PASSWORD:-kafka_dev_logstash_password}";
+    KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG: *kafka-users
+    KAFKA_LISTENER_NAME_CONTROLLER_PLAIN_SASL_JAAS_CONFIG: >-
+      org.apache.kafka.common.security.plain.PlainLoginModule required
+      username="admin" password="${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}"
+      user_admin="${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}";
+    # For the health check below. Not KAFKA_*, which the image would copy into Kafka's own settings.
+    HEALTHCHECK_PASSWORD: ${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}
+    # Three copies of everything. A write counts once two of them have it, so no acknowledged event
+    # is lost if one broker dies, and writes still work while one is down.
+    KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+    KAFKA_MIN_INSYNC_REPLICAS: 2
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+    # A broker that was not up to date never takes over as leader, even if that leaves a topic
+    # unavailable until one that is comes back.
+    KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
+    KAFKA_LOG_RETENTION_HOURS: 168
+    # Keep the data in the broker's volume. Without this the image keeps it inside the container, and
+    # every new container would start with no topics, no consumer positions and no access rules.
+    KAFKA_LOG_DIRS: /var/lib/kafka/data
+    KAFKA_HEAP_OPTS: -Xms256m -Xmx384m
+  depends_on: *certs-ready
+  healthcheck:
+    test:
+      - CMD-SHELL
+      - >-
+        printf 'security.protocol=SASL_SSL\nssl.truststore.type=PEM\nssl.truststore.location=/certs/ca/ca.crt\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="%s";\n' "$$HEALTHCHECK_PASSWORD" > /tmp/healthcheck.properties
+        && /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 --command-config /tmp/healthcheck.properties > /dev/null
+    interval: 10s
+    timeout: 10s
+    retries: 12
+    start_period: 20s
+  restart: unless-stopped
+  mem_limit: 640m
 
 x-service-env: &service-env
   <<: [*kafka-client, *tls, *internal-urls]
@@ -117,7 +191,7 @@ services:
   certs:
     image: alpine/openssl:3.5.9
     entrypoint: ["sh", "/make-certs.sh"]
-    command: [gateway, customer-service, account-service, auth-service, kafka, elasticsearch, postgres, redis]
+    command: [gateway, customer-service, account-service, auth-service, kafka-1, kafka-2, kafka-3, elasticsearch, postgres, redis]
     volumes:
       - ./certs/make-certs.sh:/make-certs.sh:ro
       - certs:/certs
@@ -263,84 +337,63 @@ services:
     restart: unless-stopped
     mem_limit: 128m
 
-  # Single-node Kafka. The services do not wait for it: their events are kept until it is back.
-  kafka:
-    image: apache/kafka:4.3.2
+  # Kafka: three brokers that keep three copies of everything (see x-kafka-node above). Banking and
+  # logging carry on while any two are up. The services do not wait for Kafka: their events are kept
+  # until it is back.
+  kafka-1:
+    <<: *kafka-node
     environment:
+      <<: *kafka-env
       KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      # The controller listens inside this container only. Everyone else must sign in (SASL/PLAIN).
-      # Inside the Docker network that is also encrypted (SASL_SSL). The port published to this
-      # computer alone, for running a service from the IDE, is not: that never leaves the machine.
-      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://localhost:9093,EXTERNAL://:9094
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT:-9094}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:SASL_SSL,CONTROLLER:PLAINTEXT,EXTERNAL:SASL_PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
-      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
-      # Each login may only do what kafka/setup-acls.sh allows; anything else is refused. "admin" is
-      # the broker itself. ANONYMOUS is the controller connection, which never leaves this container.
-      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
-      KAFKA_SUPER_USERS: User:admin;User:ANONYMOUS
-      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
-      # Its certificate, from the certs step, and the certificate authority it trusts.
-      KAFKA_SSL_KEYSTORE_TYPE: PEM
-      KAFKA_SSL_KEYSTORE_LOCATION: /certs/own/tls.pem
-      KAFKA_SSL_TRUSTSTORE_TYPE: PEM
-      KAFKA_SSL_TRUSTSTORE_LOCATION: /certs/ca/ca.crt
-      # Who may sign in. "admin" is the broker itself; the rest are the bank's apps, Filebeat and Logstash.
-      KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG: &kafka-users >-
-        org.apache.kafka.common.security.plain.PlainLoginModule required
-        username="admin" password="${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}"
-        user_admin="${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}"
-        user_bank="${KAFKA_BANK_PASSWORD:-kafka_dev_bank_password}"
-        user_filebeat="${KAFKA_FILEBEAT_PASSWORD:-kafka_dev_filebeat_password}"
-        user_logstash="${KAFKA_LOGSTASH_PASSWORD:-kafka_dev_logstash_password}";
-      KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG: *kafka-users
-      # For the health check below. Not KAFKA_*, which the image would copy into Kafka's own settings.
-      HEALTHCHECK_PASSWORD: ${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}
-      # One broker, so nothing can have more than one copy.
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_LOG_RETENTION_HOURS: 168
-      # Keep the data in the kafka-data volume. Without this the image keeps it inside the container,
-      # and every new container started with no topics, no consumer positions and no access rules.
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:9092,EXTERNAL://localhost:${KAFKA_1_PORT:-9094}
     ports:
-      - "127.0.0.1:${KAFKA_PORT:-9094}:9094"
+      - "127.0.0.1:${KAFKA_1_PORT:-9094}:9094"
     volumes:
-      - kafka-data:/var/lib/kafka/data
-      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: kafka}}
-      - {type: volume, source: certs, target: /certs/ca, read_only: true, volume: {subpath: ca}}
-    depends_on: *certs-ready
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          printf 'security.protocol=SASL_SSL\nssl.truststore.type=PEM\nssl.truststore.location=/certs/ca/ca.crt\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="%s";\n' "$$HEALTHCHECK_PASSWORD" > /tmp/healthcheck.properties
-          && /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 --command-config /tmp/healthcheck.properties > /dev/null
-      interval: 10s
-      timeout: 10s
-      retries: 12
-      start_period: 20s
-    restart: unless-stopped
-    mem_limit: 768m
+      - kafka-1-data:/var/lib/kafka/data
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: kafka-1}}
+      - *ca-mount
 
-  # Says what each Kafka login may do, then stops. See kafka/setup-acls.sh.
+  kafka-2:
+    <<: *kafka-node
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 2
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:9092,EXTERNAL://localhost:${KAFKA_2_PORT:-9095}
+    ports:
+      - "127.0.0.1:${KAFKA_2_PORT:-9095}:9094"
+    volumes:
+      - kafka-2-data:/var/lib/kafka/data
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: kafka-2}}
+      - *ca-mount
+
+  kafka-3:
+    <<: *kafka-node
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:9092,EXTERNAL://localhost:${KAFKA_3_PORT:-9096}
+    ports:
+      - "127.0.0.1:${KAFKA_3_PORT:-9096}:9094"
+    volumes:
+      - kafka-3-data:/var/lib/kafka/data
+      - {type: volume, source: certs, target: /certs/own, read_only: true, volume: {subpath: kafka-3}}
+      - *ca-mount
+
+  # Makes the topics and says what each Kafka login may do, then stops. See kafka/setup.sh.
   kafka-setup:
     image: apache/kafka:4.3.2
     depends_on:
-      kafka:
+      kafka-1:
         condition: service_healthy
-    entrypoint: ["sh", "/setup-acls.sh"]
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    entrypoint: ["sh", "/setup.sh"]
     environment:
       ADMIN_PASSWORD: ${KAFKA_ADMIN_PASSWORD:-kafka_dev_admin_password}
     volumes:
-      - ./kafka/setup-acls.sh:/setup-acls.sh:ro
+      - ./kafka/setup.sh:/setup.sh:ro
       - *ca-mount
     mem_limit: 512m
 
@@ -529,8 +582,6 @@ services:
     image: logstash:9.5.5
     profiles: [monitoring]
     depends_on:
-      kafka:
-        condition: service_healthy
       kafka-setup:
         condition: service_completed_successfully
       # Not before this: indices created earlier would miss the retention settings.
@@ -554,9 +605,7 @@ services:
     user: root
     command: ["filebeat", "-e", "--strict.perms=false"]
     depends_on:
-      kafka:
-        condition: service_healthy
-      # Not before this: until then Kafka would refuse its log lines.
+      # Not before this, which waits for all three brokers: until then Kafka would refuse its log lines.
       kafka-setup:
         condition: service_completed_successfully
     environment:
@@ -725,7 +774,9 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  kafka-data:
+  kafka-1-data:
+  kafka-2-data:
+  kafka-3-data:
   elasticsearch-data:
   filebeat-data:
   prometheus-data:

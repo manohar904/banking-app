@@ -8,13 +8,22 @@ groups:
           severity: critical
         annotations:
           summary: "{{ $labels.job }} cannot be reached"
-      - alert: KafkaDown
+      # Kafka needs two of its three brokers. With one down everything still works, but one more
+      # would stop it, so bring it back.
+      - alert: KafkaBrokerDown
         expr: probe_success{job="kafka-probe"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka broker {{ $labels.instance }} cannot be reached. Kafka keeps working on the other two, but would stop if one more went down."
+      - alert: KafkaDown
+        expr: sum(probe_success{job="kafka-probe"}) < 2
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Kafka cannot be reached. Banking keeps working and events wait in the services' databases, but nothing reaches Kibana until it is back."
+          summary: "Fewer than two of the three Kafka brokers can be reached, so Kafka takes no events. Banking keeps working and events wait in the services' databases, but nothing reaches Kibana until it is back."
       - alert: ServiceUnhealthy
         expr: bank_health_status == 0
         for: 1m

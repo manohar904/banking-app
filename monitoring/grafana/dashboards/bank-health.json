@@ -18,9 +18,9 @@
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            {"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}
+            {"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "DOWN (1 of 3)", "color": "red"}, "2": {"text": "UP (2 of 3)", "color": "orange"}, "3": {"text": "UP", "color": "green"}}}
           ],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 2}, {"color": "green", "value": 3}]}
         }
       },
       "options": {"colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"]}}
@@ -28,17 +28,17 @@
     {
       "id": 11,
       "title": "Kafka",
-      "description": "Whether Kafka accepts connections. While it is down, banking keeps working and events wait.",
+      "description": "How many of the three Kafka brokers accept connections. Kafka works while two are up. Without it, banking keeps working and events wait.",
       "type": "stat",
       "gridPos": {"x": 12, "y": 0, "w": 4, "h": 5},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "probe_success{job=\"kafka-probe\"}", "instant": true}],
+      "targets": [{"refId": "A", "expr": "sum(probe_success{job=\"kafka-probe\"})", "instant": true}],
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            {"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}
+            {"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "DOWN (1 of 3)", "color": "red"}, "2": {"text": "UP (2 of 3)", "color": "orange"}, "3": {"text": "UP", "color": "green"}}}
           ],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 2}, {"color": "green", "value": 3}]}
         }
       },
       "options": {"colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"]}}

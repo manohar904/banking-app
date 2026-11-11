@@ -20,7 +20,7 @@ processors:
       ignore_missing: true
 
 output.kafka:
-  hosts: ["kafka:9092"]
+  hosts: ["kafka-1:9092", "kafka-2:9092", "kafka-3:9092"]
   # Signs in as "filebeat"; the password comes from compose.yaml.
   username: filebeat
   password: ${KAFKA_PASSWORD}
@@ -28,5 +28,6 @@ output.kafka:
   # Over TLS, trusting only the stack's certificate authority.
   ssl.certificate_authorities: ["/certs/ca/ca.crt"]
   topic: bank.logs
-  required_acks: 1
+  # Wait until two of the three brokers have each batch, so a broker dying loses no log lines.
+  required_acks: -1
   compression: gzip

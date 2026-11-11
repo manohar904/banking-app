@@ -4,6 +4,7 @@ import com.bank.account.Account;
 import com.bank.account.AccountRepository;
 import com.bank.account.AccountTransaction;
 import com.bank.account.AccountTransactionRepository;
+import com.bank.account.InsufficientFundsException;
 import com.bank.account.RetiredCustomers;
 import com.bank.account.TransactionType;
 import com.bank.account.loan.LoanDtos.LoanOffer;
@@ -163,6 +164,51 @@ public class LoanService {
      */
     public LoanResponse repay(Authentication caller, Long id, boolean payOff) {
         Loan loan = findForUpdate(caller, id);
+        takeRepayment(loan, payOff);
+        return detail(loan);
+    }
+
+    /** Active loans with a payment due today or earlier, for the automatic payments. */
+    @Transactional(readOnly = true)
+    public List<Long> dueLoanIds() {
+        return loans.findIdsDueBy(LocalDate.now(clock));
+    }
+
+    /**
+     * Takes one loan's due payment, if it is still due: someone may have paid it a moment ago. With too
+     * little money in the account nothing is taken, and the customer is told once per missed payment;
+     * the next run tries again.
+     */
+    public AutoPayment takeDuePayment(Long id) {
+        LocalDate today = LocalDate.now(clock);
+        Loan loan = loans.findForUpdate(id).orElse(null);
+        if (loan == null || loan.getStatus() != LoanStatus.ACTIVE || loan.getNextPaymentDue().isAfter(today)) {
+            return AutoPayment.NOT_DUE;
+        }
+        try {
+            takeRepayment(loan, false);
+            return AutoPayment.TAKEN;
+        } catch (InsufficientFundsException e) {
+            // Thrown before anything changed, so this transaction can still record the miss.
+            if (loan.autoPaymentFailed()) {
+                loans.saveAndFlush(loan);
+                Account account = accountOf(loan);
+                BigDecimal amount = loan.nextRepayment(false).amount();
+                events.record("LOAN_PAYMENT_MISSED", auditId(loan), Map.of("customerId", loan.getCustomerId(),
+                        "amount", amount, "due", loan.getNextPaymentDue().toString()));
+                events.record("LOAN_PAYMENT_NOT_TAKEN", account.getId(), moneyMoved(account, amount, loan.getId()));
+            }
+            return AutoPayment.NOT_ENOUGH_MONEY;
+        }
+    }
+
+    public enum AutoPayment {
+        TAKEN,
+        NOT_ENOUGH_MONEY,
+        NOT_DUE
+    }
+
+    private void takeRepayment(Loan loan, boolean payOff) {
         LoanTerms.Repayment repayment = loan.nextRepayment(payOff);
         Account account = accountOf(loan);
         account.withdraw(repayment.amount());
@@ -178,7 +224,6 @@ public class LoanService {
         if (loan.getStatus() == LoanStatus.PAID_OFF) {
             events.record("LOAN_PAID_OFF", auditId(loan), Map.of("customerId", loan.getCustomerId()));
         }
-        return detail(loan);
     }
 
     private void requireWithinTerms(BigDecimal amount, int months) {

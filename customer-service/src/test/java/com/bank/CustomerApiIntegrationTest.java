@@ -384,6 +384,7 @@ class CustomerApiIntegrationTest {
         deliver("TRANSFER_RECEIVED", customer, "5.00", "6.00");
         deliver("LOAN_PAID_OUT", customer, "1000.00", "1006.00");
         deliver("LOAN_REPAYMENT_TAKEN", customer, "87.69", "918.31");
+        deliver("LOAN_PAYMENT_NOT_TAKEN", customer, "87.69", "50.00");
         deliver("CARD_PURCHASE", customer, "42.50", "42.50");
         deliver("CARD_PAYMENT_TAKEN", customer, "42.50", "875.81");
 
@@ -393,6 +394,7 @@ class CustomerApiIntegrationTest {
                 "Transfer of 5.00 to your account ending 7265",
                 "Loan of 1,000.00 paid into your account ending 7265",
                 "Loan repayment of 87.69 from your account ending 7265",
+                "Loan payment of 87.69 could not be taken from your account ending 7265",
                 "Card purchase of 42.50 on your card ending 7265",
                 "Card payment of 42.50 from your account ending 7265");
     }

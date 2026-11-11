@@ -64,6 +64,9 @@ public class Loan {
 
     private LocalDate nextPaymentDue;
 
+    /** The due date of the last payment the automatic payments couldn't take, so the customer is told once. */
+    private LocalDate autoPayFailedFor;
+
     @Column(nullable = false, updatable = false)
     private Instant requestedAt;
 
@@ -119,6 +122,15 @@ public class Loan {
                     BigDecimal.ZERO.setScale(2));
         }
         return LoanTerms.nextRepayment(remainingPrincipal, annualRate, monthlyPayment, paymentsMade + 1 >= termMonths);
+    }
+
+    /** Notes that the payment due now couldn't be taken. True the first time for this due date. */
+    boolean autoPaymentFailed() {
+        if (nextPaymentDue.equals(autoPayFailedFor)) {
+            return false;
+        }
+        autoPayFailedFor = nextPaymentDue;
+        return true;
     }
 
     void repaid(LoanTerms.Repayment repayment, Instant now) {

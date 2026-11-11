@@ -1038,7 +1038,7 @@ function loanPanel() {
       el("p", { class: "balance-label" }, "Still owed"),
       el("p", { class: "balance money" }, moneyFormat.format(loan.remainingPrincipal)),
       el("p", { class: "balance-label" }, loan.overdue
-        ? `Next payment of ${moneyFormat.format(loan.nextPaymentAmount)} was due on ${formatDay(loan.nextPaymentDue)}.`
+        ? `Next payment of ${moneyFormat.format(loan.nextPaymentAmount)} was due on ${formatDay(loan.nextPaymentDue)} and could not be taken: there was not enough money in account ${loan.accountNumber}. We try again every hour.`
         : `Next payment: ${moneyFormat.format(loan.nextPaymentAmount)} by ${formatDay(loan.nextPaymentDue)}.`)) : null,
     loan.status === "REJECTED" && loan.decisionNote
       ? el("p", { class: "notify-row" }, el("span", {}, el("strong", {}, "Reason: "), loan.decisionNote)) : null,
@@ -1093,8 +1093,8 @@ function loanActions(loan) {
       error);
   }
   if (loan.status === "ACTIVE") {
-    const repay = el("button", { type: "button", class: "primary" }, `Pay ${moneyFormat.format(loan.nextPaymentAmount)} now`);
-    repay.onclick = () => run(repay, "repay", undefined, "Repayment made.");
+    const repay = el("button", { type: "button", class: "primary" }, `Pay ${moneyFormat.format(loan.nextPaymentAmount)} ${loan.overdue ? "now" : "early"}`);
+    repay.onclick = () => run(repay, "repay", undefined, loan.overdue ? "Repayment made." : "Repayment made early.");
     const payOff = el("button", { type: "button" }, `Pay off all ${moneyFormat.format(loan.remainingPrincipal)}`);
     payOff.onclick = () => openConfirm("Pay off loan",
       `Pay off the whole loan now? ${moneyFormat.format(loan.remainingPrincipal)} will be taken from account ${loan.accountNumber}. There is no fee for paying early.`,
@@ -1105,7 +1105,7 @@ function loanActions(loan) {
       }, "Pay off");
     return el("div", {},
       el("div", { class: "money-form" }, repay, payOff),
-      el("p", { class: "muted allowance" }, `Payments are taken from account ${loan.accountNumber}.`),
+      el("p", { class: "muted allowance" }, `Each payment is taken automatically from account ${loan.accountNumber} on its due date. Paying early moves the next one a month on.`),
       error);
   }
   return null;

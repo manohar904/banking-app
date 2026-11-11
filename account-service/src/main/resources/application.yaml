@@ -55,6 +55,10 @@ bank:
     max-amount: 50000.00
     min-months: 6
     max-months: 60
+    auto-pay:
+      # Monthly payments are taken from the loan's account when due. Every hour, at five past.
+      enabled: true
+      cron: "0 5 * * * *"
   cards:
     # The highest spending limit staff can give a card.
     max-limit: 20000.00

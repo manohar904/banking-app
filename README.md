@@ -201,7 +201,8 @@ customer's own, or for staff everyone's, filtered with `status=WAITING_FOR_BANK`
 and `/{id}`, `/{id}/messages` and `/{id}/close` read, reply and close. A customer gets a 404 for anyone
 else's question. Each customer may have 5 open questions at a time; subjects are up to 120 characters and
 messages up to 2000. Deleting a customer deletes their questions. Events and the audit log record only
-ids (`HELP_REQUEST_OPENED`, `HELP_MESSAGE_SENT`, `HELP_REQUEST_CLOSED`), never what was written.
+ids (`HELP_REQUEST_OPENED`, `HELP_MESSAGE_SENT`, `HELP_REQUEST_CLOSED`, with the question as `help-<id>`),
+never what was written.
 
 ### Availability
 

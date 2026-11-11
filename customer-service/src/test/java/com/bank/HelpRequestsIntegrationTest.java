@@ -98,7 +98,7 @@ class HelpRequestsIntegrationTest {
 
         // Ids only in the audit log (and so in events), never what was written.
         assertThat(jdbc.queryForList("select details from audit_log where target_id = ? and action like 'HELP%'",
-                String.class, String.valueOf(question)))
+                String.class, "help-" + question))
                 .hasSize(4)
                 .noneMatch(details -> details.contains("card") || details.contains("Thanks"));
     }

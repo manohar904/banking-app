@@ -100,6 +100,35 @@
     </form>
   </dialog>
 
+  <dialog id="loan-dialog">
+    <form id="loan-form" method="dialog" novalidate>
+      <h2>Apply for a loan</h2>
+      <p id="loan-limits" class="muted"></p>
+      <p class="form-error" data-form-error hidden></p>
+      <label>Paid into and repaid from
+        <select name="accountId"></select>
+        <span class="field-error" data-error-for="accountId"></span>
+      </label>
+      <label>Amount
+        <input name="amount" inputmode="decimal" autocomplete="off" placeholder="0.00" required>
+        <span class="field-error" data-error-for="amount"></span>
+      </label>
+      <label>Months
+        <input name="months" inputmode="numeric" autocomplete="off" maxlength="3" required>
+        <span class="field-error" data-error-for="months"></span>
+      </label>
+      <label>What is it for?
+        <input name="purpose" maxlength="200" autocomplete="off" placeholder="For example, a car" required>
+        <span class="field-error" data-error-for="purpose"></span>
+      </label>
+      <p id="loan-quote" class="loan-quote" aria-live="polite"></p>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Send request</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="confirm-dialog">
     <form id="confirm-form" method="dialog">
       <h2 id="confirm-title"></h2>

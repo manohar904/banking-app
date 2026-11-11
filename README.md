@@ -181,13 +181,37 @@ ended by a reset; they expire after 30 minutes unused.
 
 ### Transaction emails
 
-Customers get an email for every deposit, withdrawal and transfer, unless staff turn it off on the
+Customers get an email for every deposit, withdrawal, transfer and loan payment, unless staff turn it off on the
 customer's page. Customers can see the setting but not change it. They use the same email account as alerts
 (`.env`); without one, none are sent. Emails show only the last four digits of the account number.
 
 `customer-service` reads the events from Kafka, so email trouble can't affect the transaction itself, and
 emails arrive late if Kafka is down. Failed sends are retried for about an hour, a repeated event doesn't
 send a second email, and turning this on doesn't email anyone about earlier transactions.
+
+### Loans
+
+Customers apply for a loan on their page (**Apply for a loan**): an amount from 100.00 to 50,000.00, a
+length from 6 to 60 months, the account it is paid into and repaid from, and what it is for. Before
+sending, they see the monthly payment and the total cost. Staff decide on the **Loans** tile, or on
+the customer's page: approving pays the money into the account straight away; rejecting can give a
+reason, which the customer sees. A customer can cancel a request staff haven't decided yet.
+
+The interest rate is fixed for each loan when it is asked for: 9.50% a year, or `LOAN_ANNUAL_INTEREST_RATE`
+in `.env`. Changing it only affects new requests. Loans are repaid in equal monthly payments; each first
+pays the month's interest on what is still owed, and the last one clears the loan to the cent. The
+customer (or staff) presses **Pay now** each month, and it is taken from the loan's account; with too
+little money there, nothing happens and they are told why. **Pay off** repays everything still owed at
+once, with no fee and no further interest. A payment not made by its due date shows as overdue. Payments
+are not yet taken automatically.
+
+Each customer may have one request waiting and up to 3 loans being repaid at once. The money moves
+through the account's ledger (`LOAN_PAYOUT`, `LOAN_REPAYMENT`) in the same database transaction as the
+loan's own change, and both send a transaction email. An account with a request waiting can't be
+deleted. The API is `/api/loans` in `account-service`: `offer` and `quote?amount=&months=` show the
+terms; `POST` applies (customers only); `GET` lists (a customer's own, or for staff everyone's, with
+`customerId=` and `status=`); `/{id}/approve` and `/{id}/reject` (staff), `/{id}/cancel` (the customer),
+and `/{id}/repay` and `/{id}/pay-off`. The audit log and events name loans `loan-<id>`.
 
 ### Help
 
@@ -201,7 +225,8 @@ customer's own, or for staff everyone's, filtered with `status=WAITING_FOR_BANK`
 and `/{id}`, `/{id}/messages` and `/{id}/close` read, reply and close. A customer gets a 404 for anyone
 else's question. Each customer may have 5 open questions at a time; subjects are up to 120 characters and
 messages up to 2000. Deleting a customer deletes their questions. Events and the audit log record only
-ids (`HELP_REQUEST_OPENED`, `HELP_MESSAGE_SENT`, `HELP_REQUEST_CLOSED`), never what was written.
+ids (`HELP_REQUEST_OPENED`, `HELP_MESSAGE_SENT`, `HELP_REQUEST_CLOSED`, with the question as `help-<id>`),
+never what was written.
 
 ### Availability
 

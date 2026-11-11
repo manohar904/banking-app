@@ -4,7 +4,7 @@ const CUSTOMER_PAGE_SIZE = 20;
 const TRANSACTION_PAGE_SIZE = 10;
 const AUDIT_PAGE_SIZE = 25;
 const HELP_PAGE_SIZE = 20;
-const AUDIT_SOURCES = { accounts: "Accounts and money", customers: "Customers and help", auth: "Sign-ins and passwords" };
+const AUDIT_SOURCES = { accounts: "Accounts, money and loans", customers: "Customers and help", auth: "Sign-ins and passwords" };
 // Matches the API: at most 17 whole digits and 2 decimals.
 const AMOUNT_PATTERN = /^\d{1,17}(\.\d{1,2})?$/;
 
@@ -26,6 +26,9 @@ function resetState() {
     audit: null,
     findAccount: false,
     help: null,
+    loans: [],
+    loan: null,
+    loanBoard: null,
   });
 }
 
@@ -46,7 +49,9 @@ class ApiError extends Error {
   }
 }
 
-const MONEY_FIELDS = new Set(["balance", "amount", "balanceAfter", "dailyLimit", "sentToday", "remainingToday"]);
+const MONEY_FIELDS = new Set(["balance", "amount", "balanceAfter", "dailyLimit", "sentToday", "remainingToday",
+  "principal", "monthlyPayment", "remainingPrincipal", "nextPaymentAmount", "totalRepayable", "totalInterest",
+  "interest", "remainingAfter", "minAmount", "maxAmount"]);
 
 /**
  * Keeps money as the digits the server sent. As a JavaScript number, a large balance
@@ -179,6 +184,7 @@ async function reloadCustomersAfterDelete() {
 async function openAuditLog(source = "accounts", page = 0) {
   state.findAccount = false;
   state.help = null;
+  state.loanBoard = null;
   const version = ++selectionVersion;
   let audit = { source, entries: { content: [], page: null }, actors: {} };
   let failure = null;
@@ -211,6 +217,7 @@ function closeCustomer() {
   selectionVersion++;
   state.customer = null;
   state.account = null;
+  state.loan = null;
   state.detailError = null;
   renderCustomers();
   renderDetail();
@@ -220,16 +227,20 @@ async function selectCustomer(id) {
   state.findAccount = false;
   state.audit = null;
   state.help = null;
+  state.loanBoard = null;
   const version = ++selectionVersion;
   try {
-    const [customer, accounts] = await Promise.all([
+    const [customer, accounts, loans] = await Promise.all([
       api(`/api/customers/${id}`),
       fetchAllAccounts(id),
+      fetchLoans(id),
     ]);
     if (version !== selectionVersion) return;
     state.customer = customer;
     state.accounts = accounts;
+    state.loans = loans;
     state.account = null;
+    state.loan = null;
     state.detailError = null;
   } catch (error) {
     if (version !== selectionVersion) return;
@@ -264,6 +275,7 @@ async function selectAccount(id, transactionPage = 0) {
     ]);
     if (version !== selectionVersion) return;
     state.account = account;
+    state.loan = null;
     state.allowance = allowance;
     state.transactions = transactions;
     state.transactionPage = transactionPage;
@@ -294,6 +306,8 @@ function welcomePanel() {
         el("strong", {}, "Customers"), el("span", {}, "Open accounts and manage sign-ins.")),
       el("button", { type: "button", class: "welcome-tile tile-money", onclick: openFindAccount },
         el("strong", {}, "Money"), el("span", {}, "Deposit, withdraw and transfer.")),
+      el("button", { type: "button", class: "welcome-tile tile-loans", onclick: () => openLoanBoard() },
+        el("strong", {}, "Loans"), el("span", {}, "Decide on requests and follow repayments.")),
       el("button", { type: "button", class: "welcome-tile tile-audit", onclick: () => openAuditLog() },
         el("strong", {}, "Audit log"), el("span", {}, "See who changed what, and when.")),
       el("button", { type: "button", class: "welcome-tile tile-help", onclick: () => openHelp() },
@@ -316,6 +330,7 @@ function openFindAccount() {
   state.findAccount = true;
   state.audit = null;
   state.help = null;
+  state.loanBoard = null;
   state.customer = null;
   state.account = null;
   state.detailError = null;
@@ -373,7 +388,7 @@ function findAccountPanel() {
 }
 
 function auditBadgeClass(action) {
-  if (action.startsWith("MONEY") || action.startsWith("TRANSFER")) return "badge-money";
+  if (action.startsWith("MONEY") || action.startsWith("TRANSFER") || action.startsWith("LOAN")) return "badge-money";
   if (action.startsWith("LOGIN") || action.startsWith("PASSWORD")) return "badge-security";
   if (action.startsWith("HELP")) return "badge-records";
   return "badge-records";
@@ -405,6 +420,10 @@ function renderDetail() {
     detail.replaceChildren(...[error, helpPanel()].filter(Boolean));
     return;
   }
+  if (state.loanBoard) {
+    detail.replaceChildren(...[error, loanBoardPanel()].filter(Boolean));
+    return;
+  }
   if (state.audit) {
     detail.replaceChildren(...[error, auditPanel()].filter(Boolean));
     return;
@@ -417,7 +436,7 @@ function renderDetail() {
     detail.replaceChildren(...[error, welcomePanel()].filter(Boolean));
     return;
   }
-  detail.replaceChildren(...[error, customerPanel(), state.account ? accountPanel() : null].filter(Boolean));
+  detail.replaceChildren(...[error, customerPanel(), state.loan ? loanPanel() : state.account ? accountPanel() : null].filter(Boolean));
 }
 
 /** Everyone can see the setting. Only staff can change it. */
@@ -441,7 +460,7 @@ function transactionEmailsRow(customer) {
       el("strong", {}, "Transaction emails "),
       el("span", { class: `badge ${enabled ? "badge-money" : "badge-off"}` }, enabled ? "On" : "Off"),
       el("p", { class: "muted" }, enabled
-        ? `An email goes to ${customer.email} for every deposit, withdrawal and transfer.`
+        ? `An email goes to ${customer.email} for every deposit, withdrawal, transfer and loan payment.`
         : "No emails are sent when money moves.")),
     isStaff() ? el("button", { type: "button", onclick: toggle }, enabled ? "Turn off" : "Turn on") : null);
 }
@@ -478,7 +497,8 @@ function customerPanel() {
       isStaff() ? el("button", { type: "button", onclick: openAccountDialog }, "New account") : null),
     accounts.length
       ? el("ul", { class: "account-list" }, ...accountItems)
-      : el("p", { class: "empty" }, "This customer has no accounts yet."));
+      : el("p", { class: "empty" }, "This customer has no accounts yet."),
+    ...loansSection());
 }
 
 function auditActor(entry, actors) {
@@ -531,6 +551,8 @@ function auditPanel() {
 function entryLabel(entry) {
   if (entry.type === "TRANSFER_OUT") return `Transfer to ${entry.counterpartyAccountNumber}`;
   if (entry.type === "TRANSFER_IN") return `Transfer from ${entry.counterpartyAccountNumber}`;
+  if (entry.type === "LOAN_PAYOUT") return "Loan paid in";
+  if (entry.type === "LOAN_REPAYMENT") return "Loan repayment";
   return titleCase(entry.type);
 }
 
@@ -596,7 +618,7 @@ function accountPanel() {
   transfer.onclick = () => submit("transfer");
 
   const rows = transactions.content.map((entry) => {
-    const isCredit = entry.type === "DEPOSIT" || entry.type === "TRANSFER_IN";
+    const isCredit = ["DEPOSIT", "TRANSFER_IN", "LOAN_PAYOUT"].includes(entry.type);
     return el("tr", {},
       el("td", {}, dateFormat.format(new Date(entry.createdAt))),
       el("td", {}, el("span", { class: "txn" },
@@ -682,6 +704,7 @@ const FAQ = [
 async function openHelp(filter = state.help?.filter ?? "WAITING_FOR_BANK", page = 0) {
   state.findAccount = false;
   state.audit = null;
+  state.loanBoard = null;
   const version = ++selectionVersion;
   const status = isStaff() && filter !== "ALL" ? `&status=${filter}` : "";
   let requests = { content: [], page: null };
@@ -882,6 +905,338 @@ function helpConversationPanel(request) {
       : el("form", { class: "help-form", novalidate: "", onsubmit: (event) => { event.preventDefault(); submit(); } },
           el("label", {}, isStaff() ? "Answer" : "Reply", reply, replyError),
           el("div", { class: "actions" }, send)));
+}
+
+/* ---------- Loans ---------- */
+
+const LOAN_FILTERS = {
+  REQUESTED: "Waiting for a decision",
+  ACTIVE: "Being repaid",
+  ALL: "All",
+};
+
+const LOAN_STATUS = {
+  REQUESTED: ["Waiting for a decision", "badge-security"],
+  ACTIVE: ["Being repaid", "badge-money"],
+  PAID_OFF: ["Paid off", "badge-records"],
+  REJECTED: ["Not approved", "badge-off"],
+  CANCELLED: ["Cancelled", "badge-off"],
+};
+
+function loanStatusBadge(loan) {
+  if (loan.status === "ACTIVE" && loan.overdue) return el("span", { class: "badge badge-danger" }, "Payment overdue");
+  const [text, kind] = LOAN_STATUS[loan.status];
+  return el("span", { class: `badge ${kind}` }, text);
+}
+
+const dayFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+/** A due date is a calendar day, not a moment, so it is shown without converting time zones. */
+const formatDay = (isoDate) => dayFormat.format(new Date(`${isoDate}T12:00:00`));
+
+async function fetchLoans(customerId) {
+  try {
+    return (await api(`/api/loans?customerId=${customerId}&size=50`)).content;
+  } catch {
+    // The rest of the customer's page still works without loans.
+    return [];
+  }
+}
+
+async function selectLoan(id) {
+  const version = ++selectionVersion;
+  try {
+    const loan = await api(`/api/loans/${id}`);
+    if (version !== selectionVersion) return;
+    state.loan = loan;
+    state.account = null;
+    state.loans = state.loans.map((existing) => (existing.id === loan.id ? loan : existing));
+    state.detailError = null;
+  } catch (error) {
+    if (version !== selectionVersion) return;
+    state.detailError = error.message;
+  }
+  renderDetail();
+}
+
+/** After a loan changes money, the customer's balances change too. */
+async function refreshAfterLoanChange(loan) {
+  const [accounts, loans] = await Promise.all([fetchAllAccounts(loan.customerId), fetchLoans(loan.customerId)]);
+  state.accounts = accounts;
+  state.loans = loans;
+  state.loan = loan;
+  state.detailError = null;
+  renderDetail();
+}
+
+function loanItems() {
+  return state.loans.map((loan) => el("li", {},
+    el("button", {
+      type: "button",
+      class: "account-button account-loan",
+      "aria-current": state.loan?.id === loan.id ? "true" : "false",
+      onclick: () => selectLoan(loan.id),
+    },
+    el("span", { class: "account-name" },
+      el("span", { class: "account-icon", "aria-hidden": "true" }, "L"),
+      el("span", {}, `Loan of ${moneyFormat.format(loan.principal)}`,
+        el("small", { class: "muted" }, `${loan.termMonths} months · ${loan.purpose}`))),
+    loan.status === "ACTIVE"
+      ? el("span", { class: "loan-owed" }, el("span", { class: "money" }, moneyFormat.format(loan.remainingPrincipal)),
+          el("small", { class: "muted" }, "still owed"))
+      : loanStatusBadge(loan))));
+}
+
+function loansSection() {
+  const canApply = !isStaff() && state.accounts.length > 0;
+  return [
+    el("div", { class: "panel-head spaced-top" },
+      el("h3", {}, "Loans"),
+      canApply ? el("button", { type: "button", onclick: openLoanDialog }, "Apply for a loan") : null),
+    state.loans.length
+      ? el("ul", { class: "account-list" }, ...loanItems())
+      : el("p", { class: "empty" }, isStaff() ? "This customer has no loans." : "You have no loans."),
+  ];
+}
+
+function loanFact(label, value) {
+  return el("div", { class: "fact" }, el("dt", {}, label), el("dd", {}, value));
+}
+
+function loanPanel() {
+  const { loan } = state;
+  const active = loan.status === "ACTIVE";
+  const facts = el("dl", { class: "facts" },
+    loanFact("Borrowed", el("span", { class: "money" }, moneyFormat.format(loan.principal))),
+    loanFact("Interest", `${Number(loan.annualRate).toFixed(2)}% a year`),
+    loanFact("Monthly payment", el("span", { class: "money" }, moneyFormat.format(loan.monthlyPayment))),
+    loanFact("Length", `${loan.termMonths} months`),
+    loanFact("Paid into", el("span", { class: "number" }, loan.accountNumber ?? `account ${loan.accountId}`)),
+    loanFact("Asked for", dateFormat.format(new Date(loan.requestedAt))),
+    loan.status === "ACTIVE" || loan.status === "PAID_OFF"
+      ? loanFact("Payments made", `${loan.paymentsMade} of ${loan.termMonths}`) : null);
+
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-head" },
+      el("div", {},
+        el("h2", {}, `Loan for ${loan.purpose}`),
+        el("p", { class: "muted" }, loanStatusBadge(loan))),
+      el("button", { type: "button", onclick: closeLoan }, "Close")),
+    active ? el("div", { class: "balance-card balance-loan" },
+      el("p", { class: "balance-label" }, "Still owed"),
+      el("p", { class: "balance money" }, moneyFormat.format(loan.remainingPrincipal)),
+      el("p", { class: "balance-label" }, loan.overdue
+        ? `Next payment of ${moneyFormat.format(loan.nextPaymentAmount)} was due on ${formatDay(loan.nextPaymentDue)}.`
+        : `Next payment: ${moneyFormat.format(loan.nextPaymentAmount)} by ${formatDay(loan.nextPaymentDue)}.`)) : null,
+    loan.status === "REJECTED" && loan.decisionNote
+      ? el("p", { class: "notify-row" }, el("span", {}, el("strong", {}, "Reason: "), loan.decisionNote)) : null,
+    loanActions(loan),
+    facts,
+    loan.repayments?.length ? repaymentTable(loan.repayments) : null);
+}
+
+function closeLoan() {
+  selectionVersion++;
+  state.loan = null;
+  state.detailError = null;
+  renderDetail();
+}
+
+function loanActions(loan) {
+  const error = el("span", { class: "field-error", role: "alert" });
+  const run = async (button, path, body, message) => {
+    button.disabled = true;
+    error.textContent = "";
+    try {
+      const updated = await api(`/api/loans/${loan.id}/${path}`, { method: "POST", body });
+      toast(message);
+      await refreshAfterLoanChange(updated);
+      return;
+    } catch (failure) {
+      error.textContent = failure.fieldErrors.note ?? failure.message;
+    }
+    button.disabled = false;
+  };
+
+  if (loan.status === "REQUESTED" && isStaff()) {
+    const approve = el("button", { type: "button", class: "primary" }, `Approve and pay ${moneyFormat.format(loan.principal)}`);
+    approve.onclick = () => run(approve, "approve", undefined, "Loan approved and paid in.");
+    const note = el("input", { name: "note", maxlength: "300", autocomplete: "off", placeholder: "Optional, shown to the customer" });
+    const reject = el("button", { type: "submit", class: "danger" }, "Reject");
+    return el("div", {},
+      el("div", { class: "money-form" }, approve),
+      el("form", {
+        class: "money-form",
+        novalidate: "",
+        onsubmit: (event) => { event.preventDefault(); run(reject, "reject", { note: note.value.trim() || null }, "Loan rejected."); },
+      }, el("label", {}, "Reason for rejecting", note), reject),
+      error);
+  }
+  if (loan.status === "REQUESTED") {
+    const cancel = el("button", { type: "button", class: "danger" }, "Cancel request");
+    cancel.onclick = () => run(cancel, "cancel", undefined, "Loan request cancelled.");
+    return el("div", {},
+      el("p", { class: "muted" }, "We will look at your request and answer here."),
+      el("div", { class: "button-row" }, cancel),
+      error);
+  }
+  if (loan.status === "ACTIVE") {
+    const repay = el("button", { type: "button", class: "primary" }, `Pay ${moneyFormat.format(loan.nextPaymentAmount)} now`);
+    repay.onclick = () => run(repay, "repay", undefined, "Repayment made.");
+    const payOff = el("button", { type: "button" }, `Pay off all ${moneyFormat.format(loan.remainingPrincipal)}`);
+    payOff.onclick = () => openConfirm("Pay off loan",
+      `Pay off the whole loan now? ${moneyFormat.format(loan.remainingPrincipal)} will be taken from account ${loan.accountNumber}. There is no fee for paying early.`,
+      async () => {
+        const updated = await api(`/api/loans/${loan.id}/pay-off`, { method: "POST" });
+        toast("Loan paid off.");
+        await refreshAfterLoanChange(updated);
+      }, "Pay off");
+    return el("div", {},
+      el("div", { class: "money-form" }, repay, payOff),
+      el("p", { class: "muted allowance" }, `Payments are taken from account ${loan.accountNumber}.`),
+      error);
+  }
+  return null;
+}
+
+function repaymentTable(repayments) {
+  const rows = [...repayments].reverse().map((repayment) => el("tr", {},
+    el("td", {}, dateFormat.format(new Date(repayment.createdAt))),
+    el("td", { class: "right number" }, moneyFormat.format(repayment.amount)),
+    el("td", { class: "right number" }, moneyFormat.format(repayment.interest)),
+    el("td", { class: "right number" }, moneyFormat.format(repayment.remainingAfter))));
+  return el("div", {},
+    el("h3", { class: "spaced-top" }, "Repayments"),
+    el("div", { class: "table-wrap" }, el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", { scope: "col" }, "Date"),
+        el("th", { scope: "col", class: "right" }, "Paid"),
+        el("th", { scope: "col", class: "right" }, "Of which interest"),
+        el("th", { scope: "col", class: "right" }, "Still owed"))),
+      el("tbody", {}, ...rows))));
+}
+
+/* The application form */
+
+let loanOffer = null;
+
+async function openLoanDialog() {
+  const form = $("loan-form");
+  form.reset();
+  showFormError(form, null);
+  clearFieldErrors(form);
+  form.elements.accountId.replaceChildren(...state.accounts.map((account) =>
+    el("option", { value: account.id }, `${titleCase(account.type)} ${account.accountNumber}`)));
+  $("loan-quote").textContent = "";
+  try {
+    loanOffer ??= await api("/api/loans/offer");
+    $("loan-limits").textContent = `You can borrow ${moneyFormat.format(loanOffer.minAmount)} to ${moneyFormat.format(loanOffer.maxAmount)}, `
+      + `over ${loanOffer.minMonths} to ${loanOffer.maxMonths} months, at ${Number(loanOffer.annualRate).toFixed(2)}% a year.`;
+  } catch (error) {
+    $("loan-limits").textContent = "";
+  }
+  $("loan-dialog").showModal();
+}
+
+let quoteTimer;
+let quoteVersion = 0;
+
+/** Shows what the loan would cost as the customer types, a moment after they stop. */
+function updateLoanQuote() {
+  clearTimeout(quoteTimer);
+  const form = $("loan-form");
+  const amount = form.elements.amount.value.trim();
+  const months = form.elements.months.value.trim();
+  const target = $("loan-quote");
+  if (!AMOUNT_PATTERN.test(amount) || !/^\d{1,3}$/.test(months)) {
+    target.textContent = "";
+    return;
+  }
+  const version = ++quoteVersion;
+  quoteTimer = setTimeout(async () => {
+    try {
+      const quote = await api(`/api/loans/quote?amount=${amount}&months=${months}`);
+      if (version !== quoteVersion) return;
+      target.textContent = `${moneyFormat.format(quote.monthlyPayment)} a month for ${quote.months} months. `
+        + `You would repay ${moneyFormat.format(quote.totalRepayable)} in all, of which ${moneyFormat.format(quote.totalInterest)} is interest.`;
+    } catch (error) {
+      if (version === quoteVersion) target.textContent = error.message;
+    }
+  }, 300);
+}
+
+/* Staff's list of loans across all customers */
+
+async function openLoanBoard(filter = state.loanBoard?.filter ?? "REQUESTED", page = 0) {
+  state.findAccount = false;
+  state.audit = null;
+  state.help = null;
+  const version = ++selectionVersion;
+  const status = filter === "ALL" ? "" : `&status=${filter}`;
+  let loans = { content: [], page: null };
+  const names = {};
+  let failure = null;
+  try {
+    loans = await api(`/api/loans?page=${page}&size=${HELP_PAGE_SIZE}${status}`);
+    // Loans know the customer's id only; names live in customer-service.
+    const ids = [...new Set(loans.content.map((loan) => loan.customerId))];
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const customer = await api(`/api/customers/${id}`);
+        names[id] = `${customer.firstName} ${customer.lastName}`;
+      } catch {
+        names[id] = `Customer ${id}`;
+      }
+    }));
+  } catch (error) {
+    failure = error.message;
+  }
+  if (version !== selectionVersion) return;
+  state.loanBoard = { filter, page, loans, names };
+  state.customer = null;
+  state.account = null;
+  state.loan = null;
+  state.detailError = failure;
+  renderCustomers();
+  renderDetail();
+}
+
+function closeLoanBoard() {
+  selectionVersion++;
+  state.loanBoard = null;
+  state.detailError = null;
+  renderDetail();
+}
+
+function loanBoardPanel() {
+  const { filter, loans, names } = state.loanBoard;
+  const select = el("select", { name: "filter", "aria-label": "Which loans" },
+    ...Object.entries(LOAN_FILTERS).map(([value, label]) => el("option", { value }, label)));
+  select.value = filter;
+  select.onchange = () => openLoanBoard(select.value);
+
+  const items = loans.content.map((loan) => el("li", {},
+    el("button", {
+      type: "button",
+      class: "help-item",
+      onclick: async () => {
+        await selectCustomer(loan.customerId);
+        await selectLoan(loan.id);
+      },
+    },
+    el("span", {},
+      `${names[loan.customerId]}: ${moneyFormat.format(loan.principal)} over ${loan.termMonths} months`,
+      el("small", {}, `${loan.purpose} · asked ${dateFormat.format(new Date(loan.requestedAt))}`)),
+    loanStatusBadge(loan))));
+
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-head" },
+      el("div", {},
+        el("h2", {}, "Loans"),
+        el("p", { class: "muted" }, "Requests to decide, and loans being repaid. Newest first.")),
+      el("button", { type: "button", onclick: closeLoanBoard }, "Close")),
+    el("label", { class: "help-filter" }, "Show", select),
+    items.length ? el("ul", { class: "help-list" }, ...items) : el("p", { class: "empty" }, "No loans here."),
+    pager(loans.page, (next) => openLoanBoard(filter, next)));
 }
 
 /* ---------- Dialogs ---------- */
@@ -1157,6 +1512,28 @@ $("account-form").onsubmit = (event) => {
     await selectCustomer(state.customer.id);
     await selectAccount(created.id);
     toast("Account opened.");
+  });
+};
+
+$("loan-form").oninput = updateLoanQuote;
+
+$("loan-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  submitDialog($("loan-dialog"), form, async () => {
+    const months = form.elements.months.value.trim();
+    const created = await api("/api/loans", {
+      method: "POST",
+      // The amount goes as a string, like other amounts, so no cents are lost.
+      body: {
+        accountId: Number(form.elements.accountId.value),
+        amount: form.elements.amount.value.trim(),
+        months: /^\d+$/.test(months) ? Number(months) : null,
+        purpose: form.elements.purpose.value.trim(),
+      },
+    });
+    await refreshAfterLoanChange(created);
+    toast("Loan request sent. We'll answer here.");
   });
 };
 

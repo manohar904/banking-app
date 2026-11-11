@@ -3,11 +3,14 @@ package com.bank.account;
 import com.bank.account.dto.AccountResponse;
 import com.bank.account.dto.CreateAccountRequest;
 import com.bank.account.dto.TransactionResponse;
+import com.bank.account.loan.LoanRepository;
+import com.bank.account.loan.LoanStatus;
 import com.bank.common.ConflictException;
 import com.bank.common.ResourceNotFoundException;
 import com.bank.common.events.DomainEvents;
 import java.math.BigDecimal;
 import java.security.SecureRandom;
+import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -31,6 +34,7 @@ public class AccountService {
     private final RetiredCustomers retiredCustomers;
     private final CustomerServiceClient customerService;
     private final DomainEvents events;
+    private final LoanRepository loanRepository;
     private final SecureRandom random = new SecureRandom();
 
     public AccountResponse create(CreateAccountRequest request) {
@@ -143,6 +147,9 @@ public class AccountService {
         }
         if (transactionRepository.existsByAccountId(id)) {
             throw new ConflictException("An account with transaction history cannot be deleted.");
+        }
+        if (loanRepository.existsByAccountIdAndStatusIn(id, EnumSet.of(LoanStatus.REQUESTED, LoanStatus.ACTIVE))) {
+            throw new ConflictException("This account has a loan request waiting. Cancel or reject it first.");
         }
         accountRepository.delete(account);
         events.record("ACCOUNT_CLOSED", id, Map.of("customerId", account.getCustomerId()));

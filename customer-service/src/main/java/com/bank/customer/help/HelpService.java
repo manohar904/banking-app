@@ -54,7 +54,7 @@ public class HelpService {
         Instant now = clock.instant();
         HelpRequest request = requests.saveAndFlush(new HelpRequest(customerId, subject.strip(), now));
         messages.saveAndFlush(new HelpMessage(request.getId(), false, userIdOf(caller), message.strip(), now));
-        events.record("HELP_REQUEST_OPENED", request.getId(), Map.of("customerId", customerId));
+        events.record("HELP_REQUEST_OPENED", auditId(request.getId()), Map.of("customerId", customerId));
         return detail(caller, request, customer);
     }
 
@@ -87,7 +87,7 @@ public class HelpService {
         Instant now = clock.instant();
         messages.saveAndFlush(new HelpMessage(id, fromBank, userIdOf(caller), message.strip(), now));
         request.messageSent(fromBank, now);
-        events.record("HELP_MESSAGE_SENT", id, Map.of("fromBank", fromBank));
+        events.record("HELP_MESSAGE_SENT", auditId(id), Map.of("fromBank", fromBank));
         return detail(caller, request, null);
     }
 
@@ -96,7 +96,7 @@ public class HelpService {
         HelpRequest request = findForUpdate(caller, id);
         if (request.getStatus() != HelpStatus.CLOSED) {
             request.close(clock.instant());
-            events.record("HELP_REQUEST_CLOSED", id, Map.of());
+            events.record("HELP_REQUEST_CLOSED", auditId(id), Map.of());
         }
         return detail(caller, request, null);
     }
@@ -120,6 +120,11 @@ public class HelpService {
 
     private static Long userIdOf(Authentication caller) {
         return caller instanceof JwtAuthenticationToken token ? Callers.userIdOf(token.getToken()) : null;
+    }
+
+    /** Question and customer ids can be the same number, so the audit log and events name questions "help-<id>". */
+    private static String auditId(Long id) {
+        return "help-" + id;
     }
 
     private static ResourceNotFoundException notFound(Long id) {

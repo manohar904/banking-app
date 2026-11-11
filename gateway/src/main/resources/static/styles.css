@@ -24,6 +24,7 @@
   --brand: linear-gradient(120deg, #3730a3 0%, #6d28d9 55%, #be185d 100%);
   --card-checking: linear-gradient(125deg, #4338ca 0%, #7c3aed 100%);
   --card-savings: linear-gradient(125deg, #0f766e 0%, #0369a1 100%);
+  --card-loan: linear-gradient(125deg, #9d174d 0%, #6d28d9 100%);
   --shadow: 0 1px 2px rgb(30 27 58 / 6%), 0 8px 24px rgb(30 27 58 / 7%);
   --shadow-strong: 0 12px 32px rgb(67 56 202 / 28%);
 }
@@ -274,6 +275,7 @@ body.customer-view .layout { grid-template-columns: minmax(0, 1fr); max-width: 8
 
 .account-checking .account-icon { background: var(--card-checking); }
 .account-savings .account-icon { background: var(--card-savings); }
+.account-loan .account-icon { background: var(--card-loan); }
 
 .number, .money { font-variant-numeric: tabular-nums; }
 .money { font-weight: 650; overflow-wrap: anywhere; }
@@ -313,6 +315,8 @@ body.customer-view .layout { grid-template-columns: minmax(0, 1fr); max-width: 8
 
 .balance-checking { background: var(--card-checking); }
 .balance-savings { background: var(--card-savings); }
+.balance-loan { background: var(--card-loan); }
+.balance-loan .balance-label + .balance + .balance-label { margin-top: 8px; }
 .balance-label { margin: 0; font-size: 0.9rem; opacity: 0.92; }
 .balance { margin: 4px 0 0; font-size: 2.1rem; letter-spacing: -0.02em; }
 
@@ -341,6 +345,7 @@ body.customer-view .layout { grid-template-columns: minmax(0, 1fr); max-width: 8
 .tile-money { background: var(--positive-soft); color: var(--positive); }
 .tile-audit { background: var(--amber-soft); color: var(--amber); }
 .tile-help { background: var(--sky-soft); color: var(--sky); }
+.tile-loans { background: var(--negative-soft); color: var(--negative); }
 
 /* The tiles are buttons that open each part. These win over the plain button styles below. */
 button.welcome-tile {
@@ -356,6 +361,7 @@ button.tile-customers:hover:not(:disabled) { background: var(--violet-soft); }
 button.tile-money:hover:not(:disabled) { background: var(--positive-soft); }
 button.tile-audit:hover:not(:disabled) { background: var(--amber-soft); }
 button.tile-help:hover:not(:disabled) { background: var(--sky-soft); }
+button.tile-loans:hover:not(:disabled) { background: var(--negative-soft); }
 @media (prefers-reduced-motion: reduce) {
   button.welcome-tile, button.welcome-tile:hover:not(:disabled) { transition: none; transform: none; }
 }
@@ -442,6 +448,7 @@ td.wrap { min-width: 220px; white-space: normal; overflow-wrap: anywhere; }
 .badge-records { background: var(--sky-soft); color: var(--sky); }
 .badge-security { background: var(--violet-soft); color: var(--violet); }
 .badge-off { background: var(--border); color: var(--text); }
+.badge-danger { background: var(--danger-soft); color: var(--danger); }
 
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
 .pager:empty { display: none; }
@@ -553,3 +560,15 @@ textarea { resize: vertical; min-height: 96px; }
 .message small { display: block; margin-bottom: 4px; color: var(--muted); }
 .message-from-bank { justify-self: start; background: var(--sky-soft); border-color: transparent; }
 .message-from-customer { justify-self: end; background: var(--accent-soft); border-color: transparent; }
+
+/* ---------- Loans ---------- */
+
+.loan-owed { display: grid; justify-items: end; }
+.loan-owed small { font-size: 0.8rem; }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.fact { padding: 12px 14px; border-radius: 12px; background: var(--surface-soft); }
+.fact dt { color: var(--muted); font-size: 0.82rem; }
+.fact dd { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+
+.loan-quote { min-height: 1.3em; margin: 12px 0 0; color: var(--accent); font-weight: 550; }

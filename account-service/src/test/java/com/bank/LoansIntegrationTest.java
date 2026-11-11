@@ -8,9 +8,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.bank.account.CustomerServiceClient;
+import com.bank.account.loan.LoanAutoPayments;
 import com.bank.common.security.TestGateway;
 import com.jayway.jsonpath.JsonPath;
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.Test;
@@ -57,6 +60,88 @@ class LoansIntegrationTest {
 
     @MockitoBean
     private CustomerServiceClient customerService;
+
+    @Autowired
+    private LoanAutoPayments autoPayments;
+
+    @Test
+    void aDuePaymentIsTakenAutomaticallyOnceAndTheNextOneIsAMonthLater() throws Exception {
+        long customer = newCustomerId();
+        long account = createAccount(customer);
+        long loan = approvedLoan(customer, account, "1000.00", 12);
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        makeDue(loan, today);
+
+        autoPayments.run();
+        autoPayments.run();
+
+        mockMvc.perform(asCustomer(customer, get("/api/loans/{id}", loan)))
+                .andExpect(jsonPath("$.paymentsMade").value(1))
+                .andExpect(jsonPath("$.nextPaymentDue").value(today.plusMonths(1).toString()));
+        assertThat(balance(account)).isEqualByComparingTo("912.31");
+        // Taken without a person, so the audit log says the system did it.
+        assertThat(jdbc.queryForObject("select actor_role from audit_log where target_id = ? and action = 'LOAN_REPAID'",
+                String.class, "loan-" + loan)).isEqualTo("SYSTEM");
+    }
+
+    @Test
+    void aPaymentNotYetDueIsLeftAlone() throws Exception {
+        long customer = newCustomerId();
+        long account = createAccount(customer);
+        long loan = approvedLoan(customer, account, "1000.00", 12);
+
+        autoPayments.run();
+
+        mockMvc.perform(asCustomer(customer, get("/api/loans/{id}", loan))).andExpect(jsonPath("$.paymentsMade").value(0));
+        assertThat(balance(account)).isEqualByComparingTo("1000.00");
+    }
+
+    @Test
+    void withoutEnoughMoneyThePaymentIsTriedAgainAndTheCustomerToldOnce() throws Exception {
+        long customer = newCustomerId();
+        long account = createAccount(customer);
+        long loan = approvedLoan(customer, account, "1000.00", 12);
+        mockMvc.perform(asStaff(post("/api/accounts/{id}/withdraw", account))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\": 950.00}")).andExpect(status().isOk());
+        makeDue(loan, LocalDate.now(ZoneOffset.UTC).minusDays(3));
+
+        autoPayments.run();
+        autoPayments.run();
+
+        mockMvc.perform(asCustomer(customer, get("/api/loans/{id}", loan)))
+                .andExpect(jsonPath("$.paymentsMade").value(0))
+                .andExpect(jsonPath("$.overdue").value(true));
+        assertThat(balance(account)).isEqualByComparingTo("50.00");
+        assertThat(jdbc.queryForObject("select count(*) from audit_log where target_id = ? and action = 'LOAN_PAYMENT_MISSED'",
+                Long.class, "loan-" + loan)).isOne();
+
+        deposit(account, "100.00");
+        autoPayments.run();
+
+        mockMvc.perform(asCustomer(customer, get("/api/loans/{id}", loan)))
+                .andExpect(jsonPath("$.paymentsMade").value(1));
+        assertThat(balance(account)).isEqualByComparingTo("62.31");
+    }
+
+    @Test
+    void payingEarlyMovesTheDueDateSoNothingIsTakenTwice() throws Exception {
+        long customer = newCustomerId();
+        long account = createAccount(customer);
+        long loan = approvedLoan(customer, account, "1000.00", 12);
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        makeDue(loan, today);
+
+        mockMvc.perform(asCustomer(customer, post("/api/loans/{id}/repay", loan))).andExpect(status().isOk());
+        autoPayments.run();
+
+        mockMvc.perform(asCustomer(customer, get("/api/loans/{id}", loan)))
+                .andExpect(jsonPath("$.paymentsMade").value(1))
+                .andExpect(jsonPath("$.nextPaymentDue").value(today.plusMonths(1).toString()));
+    }
+
+    private void makeDue(long loan, LocalDate day) {
+        jdbc.update("update loans set next_payment_due = ? where id = ?", day, loan);
+    }
 
     @Test
     void aQuoteShowsTheMonthlyPaymentAndTheTotalCost() throws Exception {

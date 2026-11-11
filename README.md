@@ -199,11 +199,15 @@ reason, which the customer sees. A customer can cancel a request staff haven't d
 
 The interest rate is fixed for each loan when it is asked for: 9.50% a year, or `LOAN_ANNUAL_INTEREST_RATE`
 in `.env`. Changing it only affects new requests. Loans are repaid in equal monthly payments; each first
-pays the month's interest on what is still owed, and the last one clears the loan to the cent. The
-customer (or staff) presses **Pay now** each month, and it is taken from the loan's account; with too
-little money there, nothing happens and they are told why. **Pay off** repays everything still owed at
-once, with no fee and no further interest. A payment not made by its due date shows as overdue. Payments
-are not yet taken automatically.
+pays the month's interest on what is still owed, and the last one clears the loan to the cent.
+
+Each payment is taken automatically from the loan's account on its due date, a month after approval and
+then monthly. `account-service` looks for due payments every hour, at five past. With too little money in
+the account nothing is taken, the loan shows as overdue, the customer gets one email (and the audit log
+one `LOAN_PAYMENT_MISSED`) per missed payment, and the next hourly run tries again; a payment more than
+a month behind is taken one per run. Taken payments are recorded as done by `SYSTEM`. The customer (or
+staff) can also **Pay early**, which moves the next due date a month on, so nothing is taken twice.
+**Pay off** repays everything still owed at once, with no fee and no further interest.
 
 Each customer may have one request waiting and up to 3 loans being repaid at once. The money moves
 through the account's ledger (`LOAN_PAYOUT`, `LOAN_REPAYMENT`) in the same database transaction as the

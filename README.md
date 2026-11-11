@@ -213,6 +213,27 @@ terms; `POST` applies (customers only); `GET` lists (a customer's own, or for st
 `customerId=` and `status=`); `/{id}/approve` and `/{id}/reject` (staff), `/{id}/cancel` (the customer),
 and `/{id}/repay` and `/{id}/pay-off`. The audit log and events name loans `loan-<id>`.
 
+### Credit cards
+
+Staff issue a credit card from the customer's page (**Issue card**) with a spending limit of up to
+20,000.00. A customer may have 3 open cards. Only the last four digits of a card's number exist: the
+bank never needs the rest, so it is never made or stored. Cards are valid to the end of the month four
+years after they are issued.
+
+There are no real shops, so staff **record purchases** on the card's page. A purchase adds to what is
+owed and is refused if the card is frozen, closed or expired, or over the available credit. The customer
+or staff **pay** the card from any of the customer's accounts, up to what is owed; the card and the
+account's balance change in one database transaction (the ledger entry is `CARD_PAYMENT`), and with too
+little money in the account nothing changes. Either side can **freeze** a card, which stops purchases but
+not payments, and unfreeze it. Staff can change the limit (never below what is owed) and close a card
+once nothing is owed. A customer with an open card can't be deleted. There is no interest on cards yet.
+
+Purchases and payments both send a transaction email. The API is `/api/cards` in `account-service`:
+`POST` issues (staff); `GET` lists a customer's cards (`customerId=` for staff); `/{id}` and
+`/{id}/transactions` read; `/{id}/purchases`, `/{id}/limit` and `/{id}/close` are for staff;
+`/{id}/payments`, `/{id}/freeze` and `/{id}/unfreeze` for both. The audit log and events name cards
+`card-<id>`, and keep shop names out.
+
 ### Help
 
 Everyone has a **Help** button. Customers see answers to common questions and can ask the bank their

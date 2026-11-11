@@ -131,7 +131,7 @@ public class LoanService {
         Account account = accountOf(loan);
         account.deposit(loan.getPrincipal());
         Account saved = accounts.saveAndFlush(account);
-        ledger.save(new AccountTransaction(saved, TransactionType.LOAN_PAYOUT, loan.getPrincipal(), loan.getId()));
+        ledger.save(AccountTransaction.forLoan(saved, TransactionType.LOAN_PAYOUT, loan.getPrincipal(), loan.getId()));
         loans.saveAndFlush(loan);
         events.record("LOAN_APPROVED", auditId(loan), Map.of("customerId", loan.getCustomerId(),
                 "amount", loan.getPrincipal()));
@@ -167,7 +167,7 @@ public class LoanService {
         Account account = accountOf(loan);
         account.withdraw(repayment.amount());
         Account saved = accounts.saveAndFlush(account);
-        ledger.save(new AccountTransaction(saved, TransactionType.LOAN_REPAYMENT, repayment.amount(), loan.getId()));
+        ledger.save(AccountTransaction.forLoan(saved, TransactionType.LOAN_REPAYMENT, repayment.amount(), loan.getId()));
         repayments.save(new LoanRepayment(loan.getId(), repayment, clock.instant()));
         loan.repaid(repayment, clock.instant());
         loans.saveAndFlush(loan);

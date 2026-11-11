@@ -97,6 +97,8 @@ public class TransactionEmails {
             case "TRANSFER_RECEIVED" -> "Transfer of %s to your account ending %s";
             case "LOAN_PAID_OUT" -> "Loan of %s paid into your account ending %s";
             case "LOAN_REPAYMENT_TAKEN" -> "Loan repayment of %s from your account ending %s";
+            case "CARD_PURCHASE" -> "Card purchase of %s on your card ending %s";
+            case "CARD_PAYMENT_TAKEN" -> "Card payment of %s from your account ending %s";
             default -> null;
         };
     }

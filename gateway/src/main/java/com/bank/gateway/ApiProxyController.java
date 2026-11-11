@@ -147,7 +147,8 @@ public class ApiProxyController {
             return customerUrl;
         }
         if (path.equals("/api/accounts") || path.startsWith("/api/accounts/")
-                || path.equals("/api/loans") || path.startsWith("/api/loans/")) {
+                || path.equals("/api/loans") || path.startsWith("/api/loans/")
+                || path.equals("/api/cards") || path.startsWith("/api/cards/")) {
             return accountUrl;
         }
         return null;

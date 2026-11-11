@@ -27,6 +27,13 @@ class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/loans", "/api/loans/*/cancel").hasRole("CUSTOMER")
                 .requestMatchers(HttpMethod.POST, "/api/loans/*/approve", "/api/loans/*/reject").hasRole("STAFF")
                 .requestMatchers(HttpMethod.POST, "/api/loans/*/repay", "/api/loans/*/pay-off")
-                .hasAnyRole(ServiceSecurity.PEOPLE));
+                .hasAnyRole(ServiceSecurity.PEOPLE)
+                // Cards: staff issue them, record purchases, change limits and close them; both read,
+                // pay and freeze. CardService checks that a customer only touches their own cards.
+                .requestMatchers(HttpMethod.GET, "/api/cards", "/api/cards/**").hasAnyRole(ServiceSecurity.PEOPLE)
+                .requestMatchers(HttpMethod.POST, "/api/cards/*/payments", "/api/cards/*/freeze",
+                        "/api/cards/*/unfreeze")
+                .hasAnyRole(ServiceSecurity.PEOPLE)
+                .requestMatchers("/api/cards", "/api/cards/**").hasRole("STAFF"));
     }
 }

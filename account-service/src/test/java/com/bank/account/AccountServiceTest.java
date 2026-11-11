@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.bank.account.card.CardRepository;
 import com.bank.account.loan.LoanRepository;
 import com.bank.common.ConflictException;
 import com.bank.common.events.DomainEvents;
@@ -47,6 +48,9 @@ class AccountServiceTest {
 
     @Mock
     private LoanRepository loanRepository;
+
+    @Mock
+    private CardRepository cardRepository;
 
     @InjectMocks
     private AccountService accountService;

@@ -55,3 +55,6 @@ bank:
     max-amount: 50000.00
     min-months: 6
     max-months: 60
+  cards:
+    # The highest spending limit staff can give a card.
+    max-limit: 20000.00

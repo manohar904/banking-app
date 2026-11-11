@@ -62,6 +62,10 @@ public class AccountTransaction {
     @Column(updatable = false)
     private Long loanId;
 
+    /** The credit card a payment went to. Empty for everything else. */
+    @Column(updatable = false)
+    private Long cardId;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -76,9 +80,17 @@ public class AccountTransaction {
     }
 
     /** A loan paid out or repaid. As with the constructor below, call after the balance has changed. */
-    public AccountTransaction(Account account, TransactionType type, BigDecimal amount, Long loanId) {
-        this(account, type, amount);
-        this.loanId = loanId;
+    public static AccountTransaction forLoan(Account account, TransactionType type, BigDecimal amount, Long loanId) {
+        AccountTransaction entry = new AccountTransaction(account, type, amount);
+        entry.loanId = loanId;
+        return entry;
+    }
+
+    /** A credit card payment. As with the constructor below, call after the balance has changed. */
+    public static AccountTransaction forCardPayment(Account account, BigDecimal amount, Long cardId) {
+        AccountTransaction entry = new AccountTransaction(account, TransactionType.CARD_PAYMENT, amount);
+        entry.cardId = cardId;
+        return entry;
     }
 
     /** Call after the balance has changed, so that balanceAfter captures the new balance. */

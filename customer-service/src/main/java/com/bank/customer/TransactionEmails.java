@@ -65,7 +65,8 @@ public class TransactionEmails {
         }
         String headline = headline(event.path("type").asString(""));
         JsonNode data = event.path("data");
-        if (headline == null || !data.has("customerId") || !data.has("accountEnding")) {
+        if (headline == null || !data.has("customerId") || !data.has("accountEnding")
+                || !data.path("amount").isNumber()) {
             return; // Events from before these fields existed have no one to tell.
         }
         customers.findById(data.path("customerId").asLong())
@@ -79,10 +80,9 @@ public class TransactionEmails {
                 Hello %s,
 
                 %s.
-                New balance: %s
-
+                %s
                 If you don't recognise this, please contact the bank straight away.
-                """.formatted(customer.getFirstName(), subject, money(data.path("balanceAfter")));
+                """.formatted(customer.getFirstName(), subject, afterwards(data));
         jdbc.update("""
                 insert into transaction_emails (event_id, recipient, subject, body) values (?, ?, ?, ?)
                 on conflict (event_id) do nothing
@@ -102,6 +102,20 @@ public class TransactionEmails {
             case "CARD_PAYMENT_TAKEN" -> "Card payment of %s from your account ending %s";
             default -> null;
         };
+    }
+
+    /**
+     * Where things stand now: an account's new balance, or for a card purchase what is owed on the card.
+     * An event with neither still gets its email, just without this line.
+     */
+    private static String afterwards(JsonNode data) {
+        if (data.path("balanceAfter").isNumber()) {
+            return "New balance: " + money(data.path("balanceAfter")) + "\n";
+        }
+        if (data.path("owedAfter").isNumber()) {
+            return "Now owed on the card: " + money(data.path("owedAfter")) + "\n";
+        }
+        return "";
     }
 
     private static String money(JsonNode amount) {

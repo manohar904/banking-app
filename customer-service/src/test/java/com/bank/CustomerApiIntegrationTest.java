@@ -385,7 +385,6 @@ class CustomerApiIntegrationTest {
         deliver("LOAN_PAID_OUT", customer, "1000.00", "1006.00");
         deliver("LOAN_REPAYMENT_TAKEN", customer, "87.69", "918.31");
         deliver("LOAN_PAYMENT_NOT_TAKEN", customer, "87.69", "50.00");
-        deliver("CARD_PURCHASE", customer, "42.50", "42.50");
         deliver("CARD_PAYMENT_TAKEN", customer, "42.50", "875.81");
 
         assertThat(emailsTo(email)).extracting(SimpleMailMessage::getSubject).containsExactlyInAnyOrder(
@@ -395,8 +394,23 @@ class CustomerApiIntegrationTest {
                 "Loan of 1,000.00 paid into your account ending 7265",
                 "Loan repayment of 87.69 from your account ending 7265",
                 "Loan payment of 87.69 could not be taken from your account ending 7265",
-                "Card purchase of 42.50 on your card ending 7265",
                 "Card payment of 42.50 from your account ending 7265");
+    }
+
+    @Test
+    void aCardPurchaseEmailSaysWhatIsOwedOnTheCard() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+
+        // The shape account-service publishes: a card has no balance, only what is owed on it.
+        transactionEmails.handle("{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"CARD_PURCHASE\",\"data\":"
+                + "{\"customerId\":" + customer + ",\"amount\":100,\"owedAfter\":100.00,\"accountEnding\":\"5066\"}}");
+        transactionEmails.sendPending();
+
+        assertThat(emailsTo(email)).singleElement().satisfies(message -> {
+            assertThat(message.getSubject()).isEqualTo("Card purchase of 100.00 on your card ending 5066");
+            assertThat(message.getText()).contains("Now owed on the card: 100.00").doesNotContain("New balance");
+        });
     }
 
     @Test

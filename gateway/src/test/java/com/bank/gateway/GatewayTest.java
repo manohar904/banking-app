@@ -250,6 +250,8 @@ class GatewayTest {
         assertThat(customers.lastPath.get()).isEqualTo("/api/customers?page=2&size=5");
         browser.get("/api/customers/5");
         assertThat(customers.lastPath.get()).isEqualTo("/api/customers/5");
+        browser.get("/api/help-requests/3");
+        assertThat(customers.lastPath.get()).isEqualTo("/api/help-requests/3");
         browser.get("/api/accounts");
         assertThat(accounts.lastPath.get()).isEqualTo("/api/accounts");
         browser.get("/api/accounts/9/transactions");

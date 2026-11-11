@@ -18,6 +18,12 @@ class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/customers").hasRole("STAFF")
                 .requestMatchers(HttpMethod.GET, "/api/customers/*").hasAnyRole(ServiceSecurity.PEOPLE)
                 .requestMatchers("/api/customers", "/api/customers/*", "/api/customers/*/transaction-emails")
-                .hasRole("STAFF"));
+                .hasRole("STAFF")
+                // Help: only customers ask; both sides read, reply and close. HelpService checks
+                // that a customer only touches their own questions.
+                .requestMatchers(HttpMethod.POST, "/api/help-requests").hasRole("CUSTOMER")
+                .requestMatchers("/api/help-requests", "/api/help-requests/*", "/api/help-requests/*/messages",
+                        "/api/help-requests/*/close")
+                .hasAnyRole(ServiceSecurity.PEOPLE));
     }
 }

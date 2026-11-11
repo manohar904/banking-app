@@ -340,6 +340,7 @@ body.customer-view .layout { grid-template-columns: minmax(0, 1fr); max-width: 8
 .tile-customers { background: var(--violet-soft); color: var(--violet); }
 .tile-money { background: var(--positive-soft); color: var(--positive); }
 .tile-audit { background: var(--amber-soft); color: var(--amber); }
+.tile-help { background: var(--sky-soft); color: var(--sky); }
 
 /* The tiles are buttons that open each part. These win over the plain button styles below. */
 button.welcome-tile {
@@ -354,13 +355,14 @@ button.welcome-tile:hover:not(:disabled) { transform: translateY(-2px); box-shad
 button.tile-customers:hover:not(:disabled) { background: var(--violet-soft); }
 button.tile-money:hover:not(:disabled) { background: var(--positive-soft); }
 button.tile-audit:hover:not(:disabled) { background: var(--amber-soft); }
+button.tile-help:hover:not(:disabled) { background: var(--sky-soft); }
 @media (prefers-reduced-motion: reduce) {
   button.welcome-tile, button.welcome-tile:hover:not(:disabled) { transition: none; transform: none; }
 }
 
 /* ---------- Controls ---------- */
 
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 
 button {
   padding: 8px 15px;
@@ -384,7 +386,7 @@ button.danger:hover:not(:disabled) { background: var(--danger-soft); }
 
 label { display: block; font-weight: 550; }
 
-input, select {
+input, select, textarea {
   display: block;
   width: 100%;
   margin-top: 5px;
@@ -510,3 +512,44 @@ dialog p { overflow-wrap: anywhere; }
   .money-form label { flex-basis: 100%; }
   .money-form button { flex: 1 1 0; }
 }
+
+/* ---------- Help ---------- */
+
+textarea { resize: vertical; min-height: 96px; }
+
+.faq { margin-top: 12px; }
+.faq details { border-bottom: 1px solid var(--border); }
+.faq details:last-child { border-bottom: 0; }
+.faq summary { padding: 12px 4px; font-weight: 600; cursor: pointer; }
+.faq details p { margin: 0 4px 14px; color: var(--muted); }
+
+.help-form { display: grid; gap: 4px; margin-top: 8px; }
+.help-form .actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.help-list { margin: 8px 0 0; padding: 0; list-style: none; }
+.help-list li + li { margin-top: 8px; }
+.help-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+}
+.help-item small { display: block; color: var(--muted); font-weight: 400; }
+.help-filter { max-width: 260px; margin-top: 12px; }
+
+.conversation { display: grid; gap: 10px; margin-top: 16px; }
+.message {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+.message p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message small { display: block; margin-bottom: 4px; color: var(--muted); }
+.message-from-bank { justify-self: start; background: var(--sky-soft); border-color: transparent; }
+.message-from-customer { justify-self: end; background: var(--accent-soft); border-color: transparent; }

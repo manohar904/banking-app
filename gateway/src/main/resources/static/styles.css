@@ -25,6 +25,7 @@
   --card-checking: linear-gradient(125deg, #4338ca 0%, #7c3aed 100%);
   --card-savings: linear-gradient(125deg, #0f766e 0%, #0369a1 100%);
   --card-loan: linear-gradient(125deg, #9d174d 0%, #6d28d9 100%);
+  --card-credit: linear-gradient(125deg, #1e1b4b 0%, #334155 55%, #0f766e 100%);
   --shadow: 0 1px 2px rgb(30 27 58 / 6%), 0 8px 24px rgb(30 27 58 / 7%);
   --shadow-strong: 0 12px 32px rgb(67 56 202 / 28%);
 }
@@ -276,6 +277,7 @@ body.customer-view .layout { grid-template-columns: minmax(0, 1fr); max-width: 8
 .account-checking .account-icon { background: var(--card-checking); }
 .account-savings .account-icon { background: var(--card-savings); }
 .account-loan .account-icon { background: var(--card-loan); }
+.account-card .account-icon { background: var(--card-credit); }
 
 .number, .money { font-variant-numeric: tabular-nums; }
 .money { font-weight: 650; overflow-wrap: anywhere; }
@@ -572,3 +574,26 @@ textarea { resize: vertical; min-height: 96px; }
 .fact dd { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; }
 
 .loan-quote { min-height: 1.3em; margin: 12px 0 0; color: var(--accent); font-weight: 550; }
+
+/* ---------- Credit cards ---------- */
+
+.credit-card {
+  display: grid;
+  gap: 18px;
+  max-width: 400px;
+  aspect-ratio: 1.586;
+  margin: 16px 0;
+  padding: 22px 24px;
+  border-radius: 18px;
+  background: var(--card-credit);
+  color: #ffffff;
+  box-shadow: var(--shadow-strong);
+}
+.credit-card-off { filter: grayscale(0.85); opacity: 0.85; }
+.credit-card-top, .credit-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.credit-card-bottom { align-self: end; }
+.credit-card-brand { font-weight: 700; letter-spacing: 0.02em; }
+.credit-card-chip { width: 42px; height: 30px; border-radius: 7px; background: linear-gradient(135deg, #fde68a, #d97706); }
+.credit-card-number { margin: 0; align-self: center; font-size: 1.35rem; letter-spacing: 0.08em; }
+.credit-card-bottom span { display: grid; }
+.credit-card-bottom small { font-size: 0.72rem; opacity: 0.85; }

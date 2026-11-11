@@ -1,5 +1,7 @@
 package com.bank.account;
 
+import com.bank.account.card.CardRepository;
+import com.bank.account.card.CardStatus;
 import com.bank.account.dto.AccountResponse;
 import com.bank.account.dto.CreateAccountRequest;
 import com.bank.account.dto.TransactionResponse;
@@ -35,6 +37,7 @@ public class AccountService {
     private final CustomerServiceClient customerService;
     private final DomainEvents events;
     private final LoanRepository loanRepository;
+    private final CardRepository cardRepository;
     private final SecureRandom random = new SecureRandom();
 
     public AccountResponse create(CreateAccountRequest request) {
@@ -160,6 +163,9 @@ public class AccountService {
         retiredCustomers.lock(customerId);
         if (accountRepository.existsByCustomerId(customerId)) {
             throw new ConflictException("Customer " + customerId + " still has accounts.");
+        }
+        if (cardRepository.existsByCustomerIdAndStatusNot(customerId, CardStatus.CLOSED)) {
+            throw new ConflictException("Customer " + customerId + " still has an open credit card.");
         }
         retiredCustomers.add(customerId);
     }

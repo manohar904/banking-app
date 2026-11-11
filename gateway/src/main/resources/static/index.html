@@ -129,6 +129,22 @@
     </form>
   </dialog>
 
+  <dialog id="card-dialog">
+    <form id="card-form" method="dialog" novalidate>
+      <h2>Issue credit card</h2>
+      <p id="card-dialog-message" class="muted"></p>
+      <p class="form-error" data-form-error hidden></p>
+      <label>Spending limit (at most 20,000.00)
+        <input name="creditLimit" inputmode="decimal" autocomplete="off" placeholder="0.00" required>
+        <span class="field-error" data-error-for="creditLimit"></span>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Issue card</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="confirm-dialog">
     <form id="confirm-form" method="dialog">
       <h2 id="confirm-title"></h2>

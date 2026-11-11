@@ -4,7 +4,7 @@ const CUSTOMER_PAGE_SIZE = 20;
 const TRANSACTION_PAGE_SIZE = 10;
 const AUDIT_PAGE_SIZE = 25;
 const HELP_PAGE_SIZE = 20;
-const AUDIT_SOURCES = { accounts: "Accounts, money and loans", customers: "Customers and help", auth: "Sign-ins and passwords" };
+const AUDIT_SOURCES = { accounts: "Accounts, money, loans and cards", customers: "Customers and help", auth: "Sign-ins and passwords" };
 // Matches the API: at most 17 whole digits and 2 decimals.
 const AMOUNT_PATTERN = /^\d{1,17}(\.\d{1,2})?$/;
 
@@ -28,6 +28,9 @@ function resetState() {
     help: null,
     loans: [],
     loan: null,
+    cards: [],
+    card: null,
+    cardTransactions: { content: [], page: null },
     loanBoard: null,
   });
 }
@@ -51,7 +54,7 @@ class ApiError extends Error {
 
 const MONEY_FIELDS = new Set(["balance", "amount", "balanceAfter", "dailyLimit", "sentToday", "remainingToday",
   "principal", "monthlyPayment", "remainingPrincipal", "nextPaymentAmount", "totalRepayable", "totalInterest",
-  "interest", "remainingAfter", "minAmount", "maxAmount"]);
+  "interest", "remainingAfter", "minAmount", "maxAmount", "creditLimit", "owed", "available", "owedAfter"]);
 
 /**
  * Keeps money as the digits the server sent. As a JavaScript number, a large balance
@@ -218,6 +221,7 @@ function closeCustomer() {
   state.customer = null;
   state.account = null;
   state.loan = null;
+  state.card = null;
   state.detailError = null;
   renderCustomers();
   renderDetail();
@@ -230,17 +234,20 @@ async function selectCustomer(id) {
   state.loanBoard = null;
   const version = ++selectionVersion;
   try {
-    const [customer, accounts, loans] = await Promise.all([
+    const [customer, accounts, loans, cards] = await Promise.all([
       api(`/api/customers/${id}`),
       fetchAllAccounts(id),
       fetchLoans(id),
+      fetchCards(id),
     ]);
     if (version !== selectionVersion) return;
     state.customer = customer;
     state.accounts = accounts;
     state.loans = loans;
+    state.cards = cards;
     state.account = null;
     state.loan = null;
+    state.card = null;
     state.detailError = null;
   } catch (error) {
     if (version !== selectionVersion) return;
@@ -276,6 +283,7 @@ async function selectAccount(id, transactionPage = 0) {
     if (version !== selectionVersion) return;
     state.account = account;
     state.loan = null;
+    state.card = null;
     state.allowance = allowance;
     state.transactions = transactions;
     state.transactionPage = transactionPage;
@@ -388,7 +396,9 @@ function findAccountPanel() {
 }
 
 function auditBadgeClass(action) {
-  if (action.startsWith("MONEY") || action.startsWith("TRANSFER") || action.startsWith("LOAN")) return "badge-money";
+  if (action.startsWith("MONEY") || action.startsWith("TRANSFER") || action.startsWith("LOAN") || action.startsWith("CARD")) {
+    return "badge-money";
+  }
   if (action.startsWith("LOGIN") || action.startsWith("PASSWORD")) return "badge-security";
   if (action.startsWith("HELP")) return "badge-records";
   return "badge-records";
@@ -436,7 +446,7 @@ function renderDetail() {
     detail.replaceChildren(...[error, welcomePanel()].filter(Boolean));
     return;
   }
-  detail.replaceChildren(...[error, customerPanel(), state.loan ? loanPanel() : state.account ? accountPanel() : null].filter(Boolean));
+  detail.replaceChildren(...[error, customerPanel(), state.card ? cardPanel() : state.loan ? loanPanel() : state.account ? accountPanel() : null].filter(Boolean));
 }
 
 /** Everyone can see the setting. Only staff can change it. */
@@ -460,7 +470,7 @@ function transactionEmailsRow(customer) {
       el("strong", {}, "Transaction emails "),
       el("span", { class: `badge ${enabled ? "badge-money" : "badge-off"}` }, enabled ? "On" : "Off"),
       el("p", { class: "muted" }, enabled
-        ? `An email goes to ${customer.email} for every deposit, withdrawal, transfer and loan payment.`
+        ? `An email goes to ${customer.email} whenever money moves: deposits, withdrawals, transfers, loans and card use.`
         : "No emails are sent when money moves.")),
     isStaff() ? el("button", { type: "button", onclick: toggle }, enabled ? "Turn off" : "Turn on") : null);
 }
@@ -498,6 +508,7 @@ function customerPanel() {
     accounts.length
       ? el("ul", { class: "account-list" }, ...accountItems)
       : el("p", { class: "empty" }, "This customer has no accounts yet."),
+    ...cardsSection(),
     ...loansSection());
 }
 
@@ -553,6 +564,7 @@ function entryLabel(entry) {
   if (entry.type === "TRANSFER_IN") return `Transfer from ${entry.counterpartyAccountNumber}`;
   if (entry.type === "LOAN_PAYOUT") return "Loan paid in";
   if (entry.type === "LOAN_REPAYMENT") return "Loan repayment";
+  if (entry.type === "CARD_PAYMENT") return "Credit card payment";
   return titleCase(entry.type);
 }
 
@@ -949,6 +961,7 @@ async function selectLoan(id) {
     if (version !== selectionVersion) return;
     state.loan = loan;
     state.account = null;
+    state.card = null;
     state.loans = state.loans.map((existing) => (existing.id === loan.id ? loan : existing));
     state.detailError = null;
   } catch (error) {
@@ -1237,6 +1250,276 @@ function loanBoardPanel() {
     el("label", { class: "help-filter" }, "Show", select),
     items.length ? el("ul", { class: "help-list" }, ...items) : el("p", { class: "empty" }, "No loans here."),
     pager(loans.page, (next) => openLoanBoard(filter, next)));
+}
+
+/* ---------- Credit cards ---------- */
+
+const CARD_PAGE_SIZE = 10;
+
+/** A card is valid to the end of its month, shown the way cards print it: MM/YY. */
+const cardExpiry = (isoDate) => `${isoDate.slice(5, 7)}/${isoDate.slice(2, 4)}`;
+
+function cardStatusBadge(card) {
+  if (card.status === "FROZEN") return el("span", { class: "badge badge-security" }, "Frozen");
+  if (card.status === "CLOSED") return el("span", { class: "badge badge-off" }, "Closed");
+  return el("span", { class: "badge badge-money" }, "Active");
+}
+
+async function fetchCards(customerId) {
+  try {
+    return await api(`/api/cards?customerId=${customerId}`);
+  } catch {
+    // The rest of the customer's page still works without cards.
+    return [];
+  }
+}
+
+async function selectCard(id, page = 0) {
+  const version = ++selectionVersion;
+  try {
+    const [card, transactions] = await Promise.all([
+      api(`/api/cards/${id}`),
+      api(`/api/cards/${id}/transactions?page=${page}&size=${CARD_PAGE_SIZE}`),
+    ]);
+    if (version !== selectionVersion) return;
+    state.card = card;
+    state.cardTransactions = transactions;
+    state.account = null;
+    state.loan = null;
+    state.cards = state.cards.map((existing) => (existing.id === card.id ? card : existing));
+    state.detailError = null;
+  } catch (error) {
+    if (version !== selectionVersion) return;
+    state.detailError = error.message;
+  }
+  renderDetail();
+}
+
+/** After a card changes, what is owed and perhaps an account's balance change too. */
+async function refreshAfterCardChange(card) {
+  const [accounts, cards] = await Promise.all([fetchAllAccounts(card.customerId), fetchCards(card.customerId)]);
+  state.accounts = accounts;
+  state.cards = cards;
+  await selectCard(card.id);
+}
+
+function closeCard() {
+  selectionVersion++;
+  state.card = null;
+  state.detailError = null;
+  renderDetail();
+}
+
+function cardsSection() {
+  const items = state.cards.map((card) => el("li", {},
+    el("button", {
+      type: "button",
+      class: "account-button account-card",
+      "aria-current": state.card?.id === card.id ? "true" : "false",
+      onclick: () => selectCard(card.id),
+    },
+    el("span", { class: "account-name" },
+      el("span", { class: "account-icon", "aria-hidden": "true" }, "▭"),
+      el("span", {}, "Credit card", el("small", { class: "number muted" }, `•••• ${card.lastFour} · until ${cardExpiry(card.expiresOn)}`))),
+    card.status === "ACTIVE"
+      ? el("span", { class: "loan-owed" }, el("span", { class: "money" }, moneyFormat.format(card.owed)),
+          el("small", { class: "muted" }, `owed of ${moneyFormat.format(card.creditLimit)}`))
+      : cardStatusBadge(card))));
+  return [
+    el("div", { class: "panel-head spaced-top" },
+      el("h3", {}, "Credit cards"),
+      isStaff() ? el("button", { type: "button", onclick: openCardDialog }, "Issue card") : null),
+    items.length
+      ? el("ul", { class: "account-list" }, ...items)
+      : el("p", { class: "empty" }, isStaff() ? "This customer has no credit cards." : "You have no credit cards."),
+  ];
+}
+
+function cardPanel() {
+  const { card, cardTransactions } = state;
+  const open = card.status !== "CLOSED";
+  const owes = Number(card.owed) > 0;
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-head" },
+      el("div", {},
+        el("h2", {}, "Credit card"),
+        el("p", { class: "muted" }, cardStatusBadge(card))),
+      el("div", { class: "button-row" },
+        open ? el("button", { type: "button", onclick: () => toggleFreeze(card) }, card.status === "FROZEN" ? "Unfreeze" : "Freeze") : null,
+        isStaff() && open ? el("button", { type: "button", class: "danger", onclick: () => confirmCloseCard(card) }, "Close card") : null,
+        el("button", { type: "button", onclick: closeCard }, "Close"))),
+    el("div", { class: `credit-card${card.status === "ACTIVE" ? "" : " credit-card-off"}` },
+      el("div", { class: "credit-card-top" },
+        el("span", { class: "credit-card-brand" }, "Banking"),
+        el("span", { class: "credit-card-chip", "aria-hidden": "true" })),
+      el("p", { class: "credit-card-number number", "aria-label": `Card ending ${card.lastFour}` }, `•••• •••• •••• ${card.lastFour}`),
+      el("div", { class: "credit-card-bottom" },
+        el("span", {}, el("small", {}, "Valid until"), cardExpiry(card.expiresOn)),
+        el("span", {}, el("small", {}, "Available"), el("span", { class: "money" }, moneyFormat.format(card.available))))),
+    card.status === "FROZEN"
+      ? el("p", { class: "muted" }, "This card is frozen: purchases are refused until it is unfrozen. You can still pay it.") : null,
+    el("dl", { class: "facts" },
+      loanFact("Spending limit", el("span", { class: "money" }, moneyFormat.format(card.creditLimit))),
+      loanFact("Owed", el("span", { class: "money" }, moneyFormat.format(card.owed))),
+      loanFact("Available", el("span", { class: "money" }, moneyFormat.format(card.available)))),
+    open && owes ? cardPaymentForm(card) : null,
+    isStaff() && card.status === "ACTIVE" ? cardPurchaseForm(card) : null,
+    isStaff() && open ? cardLimitForm(card) : null,
+    el("h3", { class: "spaced-top" }, "Card activity"),
+    cardTransactionTable(cardTransactions),
+    pager(cardTransactions.page, (next) => selectCard(card.id, next)));
+}
+
+/** Runs one of the card's actions, showing a failure under its form. */
+async function cardAction(button, error, path, options, message) {
+  button.disabled = true;
+  error.textContent = "";
+  try {
+    const card = await api(path, options);
+    toast(message);
+    await refreshAfterCardChange(card);
+    return;
+  } catch (failure) {
+    const fields = Object.values(failure.fieldErrors);
+    error.textContent = fields.length ? fields.join(" ") : failure.message;
+  }
+  button.disabled = false;
+}
+
+async function toggleFreeze(card) {
+  const action = card.status === "FROZEN" ? "unfreeze" : "freeze";
+  try {
+    const updated = await api(`/api/cards/${card.id}/${action}`, { method: "POST" });
+    toast(action === "freeze" ? "Card frozen. Purchases will be refused." : "Card unfrozen.");
+    await refreshAfterCardChange(updated);
+  } catch (error) {
+    state.detailError = error.message;
+    renderDetail();
+  }
+}
+
+function confirmCloseCard(card) {
+  openConfirm("Close card", `Close the card ending ${card.lastFour}? It can't be used again.`, async () => {
+    const updated = await api(`/api/cards/${card.id}/close`, { method: "POST" });
+    toast("Card closed.");
+    await refreshAfterCardChange(updated);
+  }, "Close card");
+}
+
+function cardPaymentForm(card) {
+  const from = el("select", { name: "fromAccountId", "aria-label": "Pay from" },
+    ...state.accounts.map((account) => el("option", { value: account.id },
+      `${titleCase(account.type)} ${account.accountNumber} (${moneyFormat.format(account.balance)})`)));
+  const amount = el("input", { name: "amount", inputmode: "decimal", autocomplete: "off", placeholder: "0.00", "aria-label": "Amount" });
+  const error = el("span", { class: "field-error", role: "alert" });
+  const pay = el("button", { type: "submit", class: "primary" }, "Pay");
+  const payAll = el("button", { type: "button" }, `Pay all ${moneyFormat.format(card.owed)}`);
+
+  const submit = (value) => {
+    if (!AMOUNT_PATTERN.test(value) || Number(value) <= 0) {
+      error.textContent = "Enter an amount above zero, with at most 2 decimals.";
+      return;
+    }
+    cardAction(pay, error, `/api/cards/${card.id}/payments`, {
+      method: "POST",
+      body: { fromAccountId: Number(from.value), amount: value },
+    }, "Card payment made.");
+  };
+  payAll.onclick = () => submit(String(card.owed));
+
+  return el("div", {},
+    el("h3", { class: "spaced-top" }, "Pay the card"),
+    state.accounts.length
+      ? el("form", { class: "money-form", novalidate: "", onsubmit: (event) => { event.preventDefault(); submit(amount.value.trim()); } },
+          el("label", {}, "From account", from), el("label", {}, "Amount", amount), pay, payAll)
+      : el("p", { class: "empty" }, "There is no account to pay from."),
+    error);
+}
+
+function cardPurchaseForm(card) {
+  const amount = el("input", { name: "amount", inputmode: "decimal", autocomplete: "off", placeholder: "0.00", "aria-label": "Amount" });
+  const merchant = el("input", { name: "merchant", maxlength: "100", autocomplete: "off", placeholder: "Shop name", "aria-label": "Shop" });
+  const error = el("span", { class: "field-error", role: "alert" });
+  const record = el("button", { type: "submit" }, "Record purchase");
+  return el("div", {},
+    el("h3", { class: "spaced-top" }, "Record a purchase"),
+    el("p", { class: "muted" }, "Stands in for a shop charging the card."),
+    el("form", {
+      class: "money-form",
+      novalidate: "",
+      onsubmit: (event) => {
+        event.preventDefault();
+        const value = amount.value.trim();
+        if (!AMOUNT_PATTERN.test(value) || Number(value) <= 0) {
+          error.textContent = "Enter an amount above zero, with at most 2 decimals.";
+          return;
+        }
+        if (!merchant.value.trim()) {
+          error.textContent = "Say where it was bought.";
+          return;
+        }
+        cardAction(record, error, `/api/cards/${card.id}/purchases`, {
+          method: "POST",
+          body: { amount: value, merchant: merchant.value.trim() },
+        }, "Purchase recorded.");
+      },
+    }, el("label", {}, "Shop", merchant), el("label", {}, "Amount", amount), record),
+    error);
+}
+
+function cardLimitForm(card) {
+  const limit = el("input", {
+    name: "creditLimit", inputmode: "decimal", autocomplete: "off", value: String(card.creditLimit), "aria-label": "New limit",
+  });
+  const error = el("span", { class: "field-error", role: "alert" });
+  const save = el("button", { type: "submit" }, "Change limit");
+  return el("div", {},
+    el("h3", { class: "spaced-top" }, "Spending limit"),
+    el("form", {
+      class: "money-form",
+      novalidate: "",
+      onsubmit: (event) => {
+        event.preventDefault();
+        const value = limit.value.trim();
+        if (!AMOUNT_PATTERN.test(value) || Number(value) <= 0) {
+          error.textContent = "Enter a limit above zero, with at most 2 decimals.";
+          return;
+        }
+        cardAction(save, error, `/api/cards/${card.id}/limit`, { method: "PUT", body: { creditLimit: value } }, "Limit changed.");
+      },
+    }, el("label", {}, "New limit", limit), save),
+    error);
+}
+
+function cardTransactionTable(transactions) {
+  const rows = transactions.content.map((entry) => {
+    const isPayment = entry.type === "PAYMENT";
+    return el("tr", {},
+      el("td", {}, dateFormat.format(new Date(entry.createdAt))),
+      el("td", {}, el("span", { class: "txn" },
+        el("span", { class: `txn-icon ${isPayment ? "txn-in" : "txn-out"}`, "aria-hidden": "true" }, isPayment ? "↓" : "↑"),
+        isPayment ? `Payment from ${entry.accountNumber ?? "an account"}` : entry.merchant)),
+      el("td", { class: `right number${isPayment ? " credit" : ""}` },
+        `${isPayment ? "−" : "+"}${moneyFormat.format(entry.amount)}`),
+      el("td", { class: "right number" }, moneyFormat.format(entry.owedAfter)));
+  });
+  if (!rows.length) return el("p", { class: "empty" }, "No purchases or payments yet.");
+  return el("div", { class: "table-wrap" }, el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", { scope: "col" }, "Date"),
+      el("th", { scope: "col" }, "What"),
+      el("th", { scope: "col", class: "right" }, "Amount"),
+      el("th", { scope: "col", class: "right" }, "Owed after"))),
+    el("tbody", {}, ...rows)));
+}
+
+function openCardDialog() {
+  const form = $("card-form");
+  form.reset();
+  showFormError(form, null);
+  clearFieldErrors(form);
+  $("card-dialog-message").textContent = `A new credit card for ${state.customer.firstName} ${state.customer.lastName}.`;
+  $("card-dialog").showModal();
 }
 
 /* ---------- Dialogs ---------- */
@@ -1534,6 +1817,19 @@ $("loan-form").onsubmit = (event) => {
     });
     await refreshAfterLoanChange(created);
     toast("Loan request sent. We'll answer here.");
+  });
+};
+
+$("card-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  submitDialog($("card-dialog"), form, async () => {
+    const card = await api("/api/cards", {
+      method: "POST",
+      body: { customerId: state.customer.id, creditLimit: form.elements.creditLimit.value.trim() },
+    });
+    toast("Card issued.");
+    await refreshAfterCardChange(card);
   });
 };
 

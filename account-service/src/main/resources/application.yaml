@@ -62,3 +62,14 @@ bank:
   cards:
     # The highest spending limit staff can give a card.
     max-limit: 20000.00
+    # Percent a year, charged monthly on the part of a statement not paid by the next one.
+    annual-interest-rate: ${CARD_ANNUAL_INTEREST_RATE:19.90}
+    # A statement's minimum payment: this percent of what is owed, but at least minimum-payment.
+    minimum-payment-percent: 5
+    minimum-payment: 25.00
+    # Days after the statement that payment is due by.
+    payment-days: 21
+    statements:
+      # A statement is made on the first of each month. Checked every hour, at a quarter past.
+      enabled: true
+      cron: "0 15 * * * *"

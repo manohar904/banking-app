@@ -597,3 +597,6 @@ textarea { resize: vertical; min-height: 96px; }
 .credit-card-number { margin: 0; align-self: center; font-size: 1.35rem; letter-spacing: 0.08em; }
 .credit-card-bottom span { display: grid; }
 .credit-card-bottom small { font-size: 0.72rem; opacity: 0.85; }
+
+/* A second line under a figure in a table cell, such as interest included in a statement. */
+.block { display: block; }

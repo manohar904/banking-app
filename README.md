@@ -230,11 +230,21 @@ or staff **pay** the card from any of the customer's accounts, up to what is owe
 account's balance change in one database transaction (the ledger entry is `CARD_PAYMENT`), and with too
 little money in the account nothing changes. Either side can **freeze** a card, which stops purchases but
 not payments, and unfreeze it. Staff can change the limit (never below what is owed) and close a card
-once nothing is owed. A customer with an open card can't be deleted. There is no interest on cards yet.
+once nothing is owed. A customer with an open card can't be deleted.
 
-Purchases and payments both send a transaction email. The API is `/api/cards` in `account-service`:
-`POST` issues (staff); `GET` lists a customer's cards (`customerId=` for staff); `/{id}` and
-`/{id}/transactions` read; `/{id}/purchases`, `/{id}/limit` and `/{id}/close` are for staff;
+On the first of each month every open or frozen card gets a **statement**: what is owed, a minimum
+payment (5% of it, but at least 25.00, or all of it when less is owed) and a due date 21 days later.
+When the previous statement wasn't paid in full by the time the next is made, a month's interest
+(`CARD_ANNUAL_INTEREST_RATE`, 19.90% a year by default, divided by 12) is added on the part still
+unpaid, as an `INTEREST` entry in the card's activity. Purchases made since the last statement carry no
+interest until the next one. Interest can take what is owed past the limit; purchases are then refused
+until it is paid down. A job checks every hour (at a quarter past) for cards with a statement due, so
+statements missed while the service was down are made when it starts again, one month per run. The
+card's page lists its statements and whether each was paid in full, the minimum was paid, or is overdue.
+
+Purchases, payments and statements with something owed send a transaction email. The API is `/api/cards`
+in `account-service`: `POST` issues (staff); `GET` lists a customer's cards (`customerId=` for staff);
+`/{id}`, `/{id}/transactions` and `/{id}/statements` read; `/{id}/purchases`, `/{id}/limit` and `/{id}/close` are for staff;
 `/{id}/payments`, `/{id}/freeze` and `/{id}/unfreeze` for both. The audit log and events name cards
 `card-<id>`, and keep shop names out.
 

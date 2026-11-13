@@ -15,7 +15,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Immutable;
 
-/** One purchase or payment. Never changed once written. */
+/** One purchase, payment or interest charge. Never changed once written. */
 @Entity
 @Table(name = "card_transactions")
 @Immutable
@@ -25,7 +25,9 @@ public class CardTransaction {
 
     public enum Type {
         PURCHASE,
-        PAYMENT
+        PAYMENT,
+        /** Added at a statement when the one before wasn't paid in full. */
+        INTEREST
     }
 
     @Id
@@ -64,6 +66,10 @@ public class CardTransaction {
         CardTransaction entry = new CardTransaction(card, Type.PAYMENT, amount, now);
         entry.accountId = accountId;
         return entry;
+    }
+
+    static CardTransaction interest(Card card, BigDecimal amount, Instant now) {
+        return new CardTransaction(card, Type.INTEREST, amount, now);
     }
 
     /** Call after the card has changed, so that owedAfter captures the new amount owed. */

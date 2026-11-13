@@ -7,20 +7,24 @@ import com.bank.account.AccountTransactionRepository;
 import com.bank.account.CustomerServiceClient;
 import com.bank.account.RetiredCustomers;
 import com.bank.account.card.CardDtos.CardResponse;
+import com.bank.account.card.CardDtos.CardStatementResponse;
 import com.bank.account.card.CardDtos.CardTransactionResponse;
 import com.bank.common.ConflictException;
 import com.bank.common.ResourceNotFoundException;
 import com.bank.common.events.DomainEvents;
 import com.bank.common.security.Callers;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -56,14 +60,30 @@ public class CardService {
     private final RetiredCustomers retiredCustomers;
     private final DomainEvents events;
     private final BigDecimal maxLimit;
+    private final CardStatementRepository statements;
+    private final StatementTerms terms;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
 
+    /**
+     * How statements are worked out. Interest is a yearly percentage, charged monthly; the minimum
+     * payment is a percentage of what is owed, but never less than minimumPayment unless less is owed.
+     */
+    record StatementTerms(BigDecimal annualInterestRate, BigDecimal minimumPaymentPercent, BigDecimal minimumPayment,
+            int paymentDays) {
+    }
+
     CardService(CardRepository cards, CardTransactionRepository cardLedger, AccountRepository accounts,
             AccountTransactionRepository accountLedger, CustomerServiceClient customerService,
-            RetiredCustomers retiredCustomers, DomainEvents events,
+            RetiredCustomers retiredCustomers, DomainEvents events, CardStatementRepository statements,
             @Value("${bank.cards.max-limit}") BigDecimal maxLimit,
+            @Value("${bank.cards.annual-interest-rate}") BigDecimal annualInterestRate,
+            @Value("${bank.cards.minimum-payment-percent}") BigDecimal minimumPaymentPercent,
+            @Value("${bank.cards.minimum-payment}") BigDecimal minimumPayment,
+            @Value("${bank.cards.payment-days}") int paymentDays,
             @Value("${bank.transfers.time-zone}") ZoneId timeZone) {
+        this.statements = statements;
+        this.terms = new StatementTerms(annualInterestRate, minimumPaymentPercent, minimumPayment, paymentDays);
         this.cards = cards;
         this.cardLedger = cardLedger;
         this.accounts = accounts;
@@ -90,7 +110,7 @@ public class CardService {
         LocalDate expiresOn = YearMonth.now(clock).plusYears(YEARS_VALID).atEndOfMonth();
         String lastFour = String.format(Locale.ROOT, "%04d", random.nextInt(10_000));
         Card card = cards.saveAndFlush(new Card(customerId, lastFour, expiresOn,
-                creditLimit.setScale(2), clock.instant()));
+                creditLimit.setScale(2), clock.instant(), LocalDate.now(clock)));
         events.record("CARD_ISSUED", auditId(card), Map.of("customerId", customerId, "creditLimit",
                 card.getCreditLimit()));
         return CardResponse.from(card);
@@ -186,6 +206,77 @@ public class CardService {
         Card card = cards.findForUpdate(id).orElseThrow(() -> notFound(id));
         card.close(clock.instant());
         return save(card, "CARD_CLOSED");
+    }
+
+    /** Newest first. paidSince is what was paid after each statement, up to the next one or now. */
+    @Transactional(readOnly = true)
+    public Page<CardStatementResponse> statements(Authentication caller, Long id, Pageable pageable) {
+        find(caller, id);
+        Instant now = clock.instant();
+        return statements.findByCardId(id, pageable).map(statement -> {
+            Instant until = statements.findFirstByCardIdAndIdGreaterThanOrderByIdAsc(id, statement.getId())
+                    .map(CardStatement::getCreatedAt).orElse(now);
+            return CardStatementResponse.from(statement, cardLedger.paidBetween(id, statement.getCreatedAt(), until));
+        });
+    }
+
+    public List<Long> cardIdsWithStatementDue() {
+        return cards.findIdsWithStatementDueBy(LocalDate.now(clock));
+    }
+
+    /**
+     * Makes the card's statement due on its nextStatementOn, if it is still due. When the statement before
+     * wasn't paid in full since it was made, a month's interest is added on the part still unpaid first, so
+     * the new statement includes it. Purchases made since the last statement are free of interest until
+     * the next one. Returns whether a statement was made.
+     */
+    public boolean makeDueStatement(Long id) {
+        LocalDate today = LocalDate.now(clock);
+        Card card = cards.findForUpdate(id).orElse(null);
+        if (card == null || card.getStatus() == CardStatus.CLOSED || card.getNextStatementOn().isAfter(today)) {
+            return false;
+        }
+        Instant now = clock.instant();
+        LocalDate statementOn = card.getNextStatementOn();
+        Optional<CardStatement> previous = statements.findFirstByCardIdOrderByIdDesc(id);
+        BigDecimal interest = previous.map(last -> interestOn(last
+                        .getBalance().subtract(cardLedger.paidBetween(id, last.getCreatedAt(), now))
+                        .max(BigDecimal.ZERO).min(card.getOwed())))
+                .orElse(BigDecimal.ZERO.setScale(2));
+        if (interest.signum() > 0) {
+            card.addInterest(interest);
+        }
+        card.statementMade();
+        Card saved = cards.saveAndFlush(card);
+        if (interest.signum() > 0) {
+            cardLedger.save(CardTransaction.interest(saved, interest, now));
+        }
+
+        BigDecimal balance = saved.getOwed();
+        BigDecimal minimum = minimumPaymentFor(balance);
+        LocalDate periodEnd = statementOn.minusDays(1);
+        LocalDate periodStart = previous.map(last -> last.getPeriodEnd().plusDays(1))
+                .orElse(LocalDate.ofInstant(saved.getCreatedAt(), clock.getZone()));
+        if (periodStart.isAfter(periodEnd)) {
+            periodStart = periodEnd;
+        }
+        LocalDate dueOn = statementOn.plusDays(terms.paymentDays());
+        statements.save(new CardStatement(id, periodStart, periodEnd, interest, balance, minimum, dueOn, now));
+        // amount and accountEnding are what the statement email shows, as for other card emails.
+        events.record("CARD_STATEMENT", auditId(saved), Map.of("customerId", saved.getCustomerId(),
+                "amount", balance, "interest", interest, "minimumPayment", minimum, "dueOn", dueOn.toString(),
+                "accountEnding", saved.getLastFour()));
+        return true;
+    }
+
+    private BigDecimal interestOn(BigDecimal unpaid) {
+        return unpaid.multiply(terms.annualInterestRate()).divide(BigDecimal.valueOf(1200), 2, RoundingMode.HALF_UP);
+    }
+
+    BigDecimal minimumPaymentFor(BigDecimal balance) {
+        BigDecimal share = balance.multiply(terms.minimumPaymentPercent()).divide(BigDecimal.valueOf(100), 2,
+                RoundingMode.HALF_UP);
+        return share.max(terms.minimumPayment()).min(balance).setScale(2, RoundingMode.HALF_UP);
     }
 
     private CardResponse save(Card card, String event) {

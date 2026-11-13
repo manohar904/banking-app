@@ -13,6 +13,7 @@ import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -53,11 +54,15 @@ public class Card {
 
     private Instant closedAt;
 
+    /** The first of the month after the last statement: when the next one is made. */
+    @Column(nullable = false)
+    private LocalDate nextStatementOn;
+
     /** Optimistic lock, as on accounts. Cards are also locked while being changed; see CardRepository. */
     @Version
     private Long version;
 
-    Card(Long customerId, String lastFour, LocalDate expiresOn, BigDecimal creditLimit, Instant now) {
+    Card(Long customerId, String lastFour, LocalDate expiresOn, BigDecimal creditLimit, Instant now, LocalDate today) {
         this.customerId = customerId;
         this.lastFour = lastFour;
         this.expiresOn = expiresOn;
@@ -65,6 +70,7 @@ public class Card {
         this.creditLimit = creditLimit;
         this.owed = BigDecimal.ZERO.setScale(2);
         this.createdAt = now;
+        this.nextStatementOn = YearMonth.from(today).plusMonths(1).atDay(1);
     }
 
     public BigDecimal available() {
@@ -98,6 +104,16 @@ public class Card {
                     + owed.toPlainString() + ").");
         }
         owed = owed.subtract(amount);
+    }
+
+    /** Interest can take what is owed over the limit; it is still owed, and purchases stop until it is paid down. */
+    void addInterest(BigDecimal interest) {
+        owed = owed.add(interest);
+    }
+
+    /** Called once the statement due on nextStatementOn has been made. */
+    void statementMade() {
+        nextStatementOn = nextStatementOn.plusMonths(1);
     }
 
     void freeze() {

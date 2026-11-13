@@ -43,12 +43,32 @@ public final class CardDtos {
             BigDecimal owed,
             BigDecimal available,
             Instant createdAt,
-            Instant closedAt) {
+            Instant closedAt,
+            LocalDate nextStatementOn) {
 
         static CardResponse from(Card card) {
             return new CardResponse(card.getId(), card.getCustomerId(), card.getLastFour(), card.getExpiresOn(),
                     card.getStatus(), card.getCreditLimit(), card.getOwed(), card.available(), card.getCreatedAt(),
-                    card.getClosedAt());
+                    card.getClosedAt(), card.getNextStatementOn());
+        }
+    }
+
+    /** paidSince is what was paid after the statement was made, up to the next statement or now. */
+    public record CardStatementResponse(
+            Long id,
+            LocalDate periodStart,
+            LocalDate periodEnd,
+            BigDecimal interest,
+            BigDecimal balance,
+            BigDecimal minimumPayment,
+            LocalDate dueOn,
+            BigDecimal paidSince,
+            Instant createdAt) {
+
+        static CardStatementResponse from(CardStatement statement, BigDecimal paidSince) {
+            return new CardStatementResponse(statement.getId(), statement.getPeriodStart(), statement.getPeriodEnd(),
+                    statement.getInterest(), statement.getBalance(), statement.getMinimumPayment(),
+                    statement.getDueOn(), paidSince, statement.getCreatedAt());
         }
     }
 

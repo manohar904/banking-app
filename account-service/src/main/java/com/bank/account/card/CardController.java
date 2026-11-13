@@ -1,6 +1,7 @@
 package com.bank.account.card;
 
 import com.bank.account.card.CardDtos.CardResponse;
+import com.bank.account.card.CardDtos.CardStatementResponse;
 import com.bank.account.card.CardDtos.CardTransactionResponse;
 import com.bank.account.card.CardDtos.IssueCard;
 import com.bank.account.card.CardDtos.NewLimit;
@@ -56,6 +57,13 @@ public class CardController {
     public PagedModel<CardTransactionResponse> transactions(Authentication caller, @PathVariable Long id,
             @PageableDefault(sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
         return new PagedModel<>(cards.transactions(caller, id, pageable));
+    }
+
+    /** Newest first. */
+    @GetMapping("/{id}/statements")
+    public PagedModel<CardStatementResponse> statements(Authentication caller, @PathVariable Long id,
+            @PageableDefault(size = 12, sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
+        return new PagedModel<>(cards.statements(caller, id, pageable));
     }
 
     /** Staff only. */

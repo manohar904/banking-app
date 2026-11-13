@@ -31,6 +31,7 @@ function resetState() {
     cards: [],
     card: null,
     cardTransactions: { content: [], page: null },
+    cardStatements: [],
     loanBoard: null,
   });
 }
@@ -1277,13 +1278,15 @@ async function fetchCards(customerId) {
 async function selectCard(id, page = 0) {
   const version = ++selectionVersion;
   try {
-    const [card, transactions] = await Promise.all([
+    const [card, transactions, statements] = await Promise.all([
       api(`/api/cards/${id}`),
       api(`/api/cards/${id}/transactions?page=${page}&size=${CARD_PAGE_SIZE}`),
+      api(`/api/cards/${id}/statements?size=12`).then((result) => result.content, () => []),
     ]);
     if (version !== selectionVersion) return;
     state.card = card;
     state.cardTransactions = transactions;
+    state.cardStatements = statements;
     state.account = null;
     state.loan = null;
     state.cards = state.cards.map((existing) => (existing.id === card.id ? card : existing));
@@ -1365,6 +1368,9 @@ function cardPanel() {
     open && owes ? cardPaymentForm(card) : null,
     isStaff() && card.status === "ACTIVE" ? cardPurchaseForm(card) : null,
     isStaff() && open ? cardLimitForm(card) : null,
+    el("h3", { class: "spaced-top" }, "Statements"),
+    open ? el("p", { class: "muted" }, `Next statement on ${formatDay(card.nextStatementOn)}. Pay a statement in full by its due date and no interest is added.`) : null,
+    cardStatementTable(state.cardStatements),
     el("h3", { class: "spaced-top" }, "Card activity"),
     cardTransactionTable(cardTransactions),
     pager(cardTransactions.page, (next) => selectCard(card.id, next)));
@@ -1491,14 +1497,47 @@ function cardLimitForm(card) {
     error);
 }
 
+/** Where a statement stands: paid in full, minimum paid, overdue, or still to pay. */
+function statementBadge(statement, isLatest) {
+  const paid = Number(statement.paidSince);
+  if (Number(statement.balance) === 0) return el("span", { class: "badge badge-off" }, "Nothing owed");
+  if (paid >= Number(statement.balance)) return el("span", { class: "badge badge-money" }, "Paid in full");
+  if (paid >= Number(statement.minimumPayment)) return el("span", { class: "badge badge-money" }, "Minimum paid");
+  const today = new Date().toISOString().slice(0, 10);
+  if (statement.dueOn < today) return el("span", { class: "badge badge-danger" }, "Minimum overdue");
+  return isLatest ? el("span", { class: "badge badge-security" }, `${moneyFormat.format(Number(statement.minimumPayment) - paid)} due`)
+    : el("span", { class: "badge badge-off" }, "Not paid");
+}
+
+function cardStatementTable(statements) {
+  if (!statements.length) return el("p", { class: "empty" }, "No statements yet. The first comes at the start of next month.");
+  const rows = statements.map((statement, index) => el("tr", {},
+    el("td", {}, `${formatDay(statement.periodStart)} – ${formatDay(statement.periodEnd)}`),
+    el("td", { class: "right number" }, moneyFormat.format(statement.balance),
+      Number(statement.interest) > 0 ? el("small", { class: "muted block" }, `incl. ${moneyFormat.format(statement.interest)} interest`) : null),
+    el("td", { class: "right number" }, moneyFormat.format(statement.minimumPayment)),
+    el("td", {}, formatDay(statement.dueOn)),
+    el("td", {}, statementBadge(statement, index === 0))));
+  return el("div", { class: "table-wrap" }, el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", { scope: "col" }, "Period"),
+      el("th", { scope: "col", class: "right" }, "Owed"),
+      el("th", { scope: "col", class: "right" }, "Minimum"),
+      el("th", { scope: "col" }, "Due by"),
+      el("th", { scope: "col" }, "Status"))),
+    el("tbody", {}, ...rows)));
+}
+
 function cardTransactionTable(transactions) {
   const rows = transactions.content.map((entry) => {
     const isPayment = entry.type === "PAYMENT";
+    const what = isPayment ? `Payment from ${entry.accountNumber ?? "an account"}`
+      : entry.type === "INTEREST" ? "Interest" : entry.merchant;
     return el("tr", {},
       el("td", {}, dateFormat.format(new Date(entry.createdAt))),
       el("td", {}, el("span", { class: "txn" },
         el("span", { class: `txn-icon ${isPayment ? "txn-in" : "txn-out"}`, "aria-hidden": "true" }, isPayment ? "↓" : "↑"),
-        isPayment ? `Payment from ${entry.accountNumber ?? "an account"}` : entry.merchant)),
+        what)),
       el("td", { class: `right number${isPayment ? " credit" : ""}` },
         `${isPayment ? "−" : "+"}${moneyFormat.format(entry.amount)}`),
       el("td", { class: "right number" }, moneyFormat.format(entry.owedAfter)));

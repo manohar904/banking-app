@@ -8,10 +8,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.bank.account.CustomerServiceClient;
+import com.bank.account.card.CardStatements;
 import com.bank.common.security.InternalTokens;
 import com.bank.common.security.TestGateway;
 import com.jayway.jsonpath.JsonPath;
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.ZoneOffset;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -60,6 +64,9 @@ class CardsIntegrationTest {
 
     @MockitoBean
     private CustomerServiceClient customerService;
+
+    @Autowired
+    private CardStatements cardStatements;
 
     @Test
     void purchasesAddToWhatIsOwedAndPaymentsComeFromAnAccount() throws Exception {
@@ -207,6 +214,99 @@ class CardsIntegrationTest {
             issue(customer, "100.00").andExpect(status().isCreated());
         }
         issue(customer, "100.00").andExpect(status().isConflict());
+    }
+
+    @Test
+    void aStatementIsMadeMonthlyAndInterestIsAddedOnlyOnWhatWasLeftUnpaid() throws Exception {
+        long customer = newCustomerId();
+        long account = createAccount(customer);
+        deposit(account, "500.00");
+        long card = idOf(issue(customer, "1000.00").andExpect(jsonPath("$.nextStatementOn")
+                        .value(YearMonth.now(ZoneOffset.UTC).plusMonths(1).atDay(1).toString()))
+                .andReturn().getResponse().getContentAsString());
+        purchase(card, "200.00", "Shop").andExpect(status().isOk());
+
+        cardStatements.run();
+        assertThat(statementsFor(card)).isZero(); // Not due until next month.
+        makeStatementDue(card, 2);
+        assertThat(statementsFor(card)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select next_statement_on from cards where id = ?", LocalDate.class, card))
+                .as("one month at a time").isEqualTo(monthsAgo(2).plusMonths(1));
+        mockMvc.perform(asCustomer(customer, get("/api/cards/{id}/statements", card)))
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].balance").value(200.00))
+                .andExpect(jsonPath("$.content[0].interest").value(0.00))
+                .andExpect(jsonPath("$.content[0].minimumPayment").value(25.00))
+                .andExpect(jsonPath("$.content[0].periodEnd").value(monthsAgo(2).minusDays(1).toString()))
+                .andExpect(jsonPath("$.content[0].dueOn").value(monthsAgo(2).plusDays(21).toString()))
+                .andExpect(jsonPath("$.content[0].paidSince").value(0));
+
+        // 50 of the 200 is paid, so the next statement adds a month's interest on the other 150.
+        pay(customer, card, account, "50.00").andExpect(status().isOk());
+        makeStatementDue(card, 1);
+        mockMvc.perform(asCustomer(customer, get("/api/cards/{id}", card)))
+                .andExpect(jsonPath("$.owed").value(152.49)); // 150 x 19.90% / 12 = 2.4875
+        mockMvc.perform(asCustomer(customer, get("/api/cards/{id}/statements", card)))
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].interest").value(2.49))
+                .andExpect(jsonPath("$.content[0].balance").value(152.49))
+                .andExpect(jsonPath("$.content[1].paidSince").value(50.00));
+        mockMvc.perform(asCustomer(customer, get("/api/cards/{id}/transactions", card)))
+                .andExpect(jsonPath("$.content[0].type").value("INTEREST"))
+                .andExpect(jsonPath("$.content[0].amount").value(2.49));
+
+        // Paid in full: no interest on the next one.
+        pay(customer, card, account, "152.49").andExpect(status().isOk());
+        purchase(card, "30.00", "Cafe").andExpect(status().isOk());
+        makeStatementDue(card, 0);
+        mockMvc.perform(asCustomer(customer, get("/api/cards/{id}/statements", card)))
+                .andExpect(jsonPath("$.content[0].interest").value(0.00))
+                .andExpect(jsonPath("$.content[0].balance").value(30.00))
+                .andExpect(jsonPath("$.content[0].minimumPayment").value(25.00));
+        assertThat(jdbc.queryForObject("select count(*) from outbox_events where aggregate_id = ? and payload like ?",
+                Integer.class, "card-" + card, "%\"CARD_STATEMENT\"%")).isEqualTo(3);
+    }
+
+    @Test
+    void theMinimumPaymentIsFivePercentButNeverMoreThanIsOwed() throws Exception {
+        long customer = newCustomerId();
+        long card = idOf(issue(customer, "5000.00").andReturn().getResponse().getContentAsString());
+        purchase(card, "1000.00", "Shop").andExpect(status().isOk());
+        makeStatementDue(card, 0);
+        mockMvc.perform(asStaff(get("/api/cards/{id}/statements", card)))
+                .andExpect(jsonPath("$.content[0].minimumPayment").value(50.00));
+
+        long small = idOf(issue(customer, "100.00").andReturn().getResponse().getContentAsString());
+        purchase(small, "10.00", "Shop").andExpect(status().isOk());
+        makeStatementDue(small, 0);
+        mockMvc.perform(asStaff(get("/api/cards/{id}/statements", small)))
+                .andExpect(jsonPath("$.content[0].minimumPayment").value(10.00));
+    }
+
+    @Test
+    void aClosedCardGetsNoStatementsAndOthersCannotSeeACardsStatements() throws Exception {
+        long customer = newCustomerId();
+        long card = idOf(issue(customer, "100.00").andReturn().getResponse().getContentAsString());
+        mockMvc.perform(asStaff(post("/api/cards/{id}/close", card))).andExpect(status().isOk());
+        makeStatementDue(card, 0);
+        assertThat(statementsFor(card)).isZero();
+
+        mockMvc.perform(asCustomer(newCustomerId(), get("/api/cards/{id}/statements", card)))
+                .andExpect(status().isNotFound());
+    }
+
+    /** Makes the card's statement due some months ago and runs the job once, as on the first of a month. */
+    private void makeStatementDue(long card, int monthsAgo) {
+        jdbc.update("update cards set next_statement_on = ? where id = ?", monthsAgo(monthsAgo), card);
+        cardStatements.run();
+    }
+
+    private static LocalDate monthsAgo(int months) {
+        return LocalDate.now(ZoneOffset.UTC).minusMonths(months);
+    }
+
+    private int statementsFor(long card) {
+        return jdbc.queryForObject("select count(*) from card_statements where card_id = ?", Integer.class, card);
     }
 
     private ResultActions issue(long customer, String limit) throws Exception {

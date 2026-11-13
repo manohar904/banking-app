@@ -414,6 +414,22 @@ class CustomerApiIntegrationTest {
     }
 
     @Test
+    void aCardNearItsLimitEmailsAWarning() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+
+        transactionEmails.handle("{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"CARD_LIMIT_NEARLY_REACHED\","
+                + "\"data\":{\"customerId\":" + customer + ",\"amount\":800.00,\"creditLimit\":1000.00,"
+                + "\"accountEnding\":\"5066\"}}");
+        transactionEmails.sendPending();
+
+        assertThat(emailsTo(email)).singleElement().satisfies(message -> {
+            assertThat(message.getSubject()).isEqualTo("You now owe 800.00 on your card ending 5066, close to its limit");
+            assertThat(message.getText()).contains("The card's limit is 1,000.00.");
+        });
+    }
+
+    @Test
     void aCardStatementEmailGivesTheMinimumPaymentAndOnlyComesWhenSomethingIsOwed() throws Exception {
         String email = uniqueEmail();
         long customer = createCustomer(email);

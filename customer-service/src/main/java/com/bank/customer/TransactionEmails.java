@@ -69,6 +69,9 @@ public class TransactionEmails {
                 || !data.path("amount").isNumber()) {
             return; // Events from before these fields existed have no one to tell.
         }
+        if (data.path("amount").decimalValue().signum() == 0) {
+            return; // A statement with nothing owed needs no email.
+        }
         customers.findById(data.path("customerId").asLong())
                 .filter(Customer::isTransactionEmailsEnabled)
                 .ifPresent(customer -> queue(event.path("eventId").asString(), customer, headline, data));
@@ -100,6 +103,7 @@ public class TransactionEmails {
             case "LOAN_PAYMENT_NOT_TAKEN" -> "Loan payment of %s could not be taken from your account ending %s";
             case "CARD_PURCHASE" -> "Card purchase of %s on your card ending %s";
             case "CARD_PAYMENT_TAKEN" -> "Card payment of %s from your account ending %s";
+            case "CARD_STATEMENT" -> "Your statement: %s owed on your card ending %s";
             default -> null;
         };
     }
@@ -109,6 +113,12 @@ public class TransactionEmails {
      * An event with neither still gets its email, just without this line.
      */
     private static String afterwards(JsonNode data) {
+        if (data.path("minimumPayment").isNumber() && data.has("dueOn")) {
+            String interest = data.path("interest").isNumber() && data.path("interest").decimalValue().signum() > 0
+                    ? "Interest added: " + money(data.path("interest")) + "\n" : "";
+            return interest + "Minimum payment: " + money(data.path("minimumPayment")) + ", due by "
+                    + data.path("dueOn").asString() + "\nPay it all by then and no interest is added.\n";
+        }
         if (data.path("balanceAfter").isNumber()) {
             return "New balance: " + money(data.path("balanceAfter")) + "\n";
         }

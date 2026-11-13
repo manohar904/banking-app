@@ -414,6 +414,26 @@ class CustomerApiIntegrationTest {
     }
 
     @Test
+    void aCardStatementEmailGivesTheMinimumPaymentAndOnlyComesWhenSomethingIsOwed() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+
+        transactionEmails.handle("{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"CARD_STATEMENT\",\"data\":"
+                + "{\"customerId\":" + customer + ",\"amount\":0.00,\"interest\":0.00,\"minimumPayment\":0.00,"
+                + "\"dueOn\":\"2026-12-22\",\"accountEnding\":\"5066\"}}");
+        transactionEmails.handle("{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"CARD_STATEMENT\",\"data\":"
+                + "{\"customerId\":" + customer + ",\"amount\":152.49,\"interest\":2.49,\"minimumPayment\":25.00,"
+                + "\"dueOn\":\"2026-12-22\",\"accountEnding\":\"5066\"}}");
+        transactionEmails.sendPending();
+
+        assertThat(emailsTo(email)).singleElement().satisfies(message -> {
+            assertThat(message.getSubject()).isEqualTo("Your statement: 152.49 owed on your card ending 5066");
+            assertThat(message.getText()).contains("Interest added: 2.49")
+                    .contains("Minimum payment: 25.00, due by 2026-12-22");
+        });
+    }
+
+    @Test
     void noEmailIsSentWhenStaffHaveTurnedThemOff() throws Exception {
         String email = uniqueEmail();
         long customer = createCustomer(email);

@@ -1,6 +1,7 @@
 package com.bank.account.card;
 
 import jakarta.persistence.LockModeType;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -17,6 +18,12 @@ public interface CardRepository extends JpaRepository<Card, Long> {
     List<Card> findByCustomerIdOrderById(Long customerId);
 
     long countByCustomerIdAndStatusNot(Long customerId, CardStatus status);
+
+    @Query("""
+            select c.id from Card c
+            where c.status <> com.bank.account.card.CardStatus.CLOSED and c.nextStatementOn <= :day
+            order by c.id""")
+    List<Long> findIdsWithStatementDueBy(LocalDate day);
 
     boolean existsByCustomerIdAndStatusNot(Long customerId, CardStatus status);
 }

@@ -62,6 +62,8 @@ bank:
   cards:
     # The highest spending limit staff can give a card.
     max-limit: 20000.00
+    # A purchase that takes what is owed to this percent of the limit emails the customer a warning.
+    limit-warning-percent: ${CARD_LIMIT_WARNING_PERCENT:80}
     # Percent a year, charged monthly on the part of a statement not paid by the next one.
     annual-interest-rate: ${CARD_ANNUAL_INTEREST_RATE:19.90}
     # A statement's minimum payment: this percent of what is owed, but at least minimum-payment.

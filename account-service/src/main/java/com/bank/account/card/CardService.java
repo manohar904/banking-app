@@ -62,6 +62,8 @@ public class CardService {
     private final BigDecimal maxLimit;
     private final CardStatementRepository statements;
     private final StatementTerms terms;
+    /** The customer is warned by email when a purchase takes what is owed to this percent of the limit. */
+    private final BigDecimal warningPercent;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
 
@@ -81,7 +83,9 @@ public class CardService {
             @Value("${bank.cards.minimum-payment-percent}") BigDecimal minimumPaymentPercent,
             @Value("${bank.cards.minimum-payment}") BigDecimal minimumPayment,
             @Value("${bank.cards.payment-days}") int paymentDays,
+            @Value("${bank.cards.limit-warning-percent}") BigDecimal warningPercent,
             @Value("${bank.transfers.time-zone}") ZoneId timeZone) {
+        this.warningPercent = warningPercent;
         this.statements = statements;
         this.terms = new StatementTerms(annualInterestRate, minimumPaymentPercent, minimumPayment, paymentDays);
         this.cards = cards;
@@ -147,6 +151,7 @@ public class CardService {
     /** Staff only, standing in for the shops a real card would be used at. */
     public CardResponse purchase(Long id, BigDecimal amount, String merchant) {
         Card card = cards.findForUpdate(id).orElseThrow(() -> notFound(id));
+        boolean wasBelowWarning = !nearlyFull(card);
         card.purchase(amount, LocalDate.now(clock));
         Card saved = cards.saveAndFlush(card);
         cardLedger.save(CardTransaction.purchase(saved, amount, merchant.strip(), clock.instant()));
@@ -154,6 +159,12 @@ public class CardService {
         // name stays out of events, like other free text.
         events.record("CARD_PURCHASE", auditId(saved), Map.of("customerId", saved.getCustomerId(),
                 "amount", amount, "owedAfter", saved.getOwed(), "accountEnding", saved.getLastFour()));
+        // Once per crossing: the customer hears again only after paying it back down below the line.
+        if (wasBelowWarning && nearlyFull(saved)) {
+            events.record("CARD_LIMIT_NEARLY_REACHED", auditId(saved), Map.of("customerId", saved.getCustomerId(),
+                    "amount", saved.getOwed(), "creditLimit", saved.getCreditLimit(),
+                    "accountEnding", saved.getLastFour()));
+        }
         return CardResponse.from(saved);
     }
 
@@ -283,6 +294,12 @@ public class CardService {
         Card saved = cards.saveAndFlush(card);
         events.record(event, auditId(saved), Map.of("customerId", saved.getCustomerId()));
         return CardResponse.from(saved);
+    }
+
+    /** Whether what is owed has reached the warning share of the card's limit. */
+    private boolean nearlyFull(Card card) {
+        return card.getOwed().multiply(BigDecimal.valueOf(100))
+                .compareTo(card.getCreditLimit().multiply(warningPercent)) >= 0;
     }
 
     private void requireAllowedLimit(BigDecimal creditLimit) {

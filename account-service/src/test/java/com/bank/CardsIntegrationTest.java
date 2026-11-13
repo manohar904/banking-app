@@ -268,6 +268,34 @@ class CardsIntegrationTest {
     }
 
     @Test
+    void theCustomerIsWarnedOnceWhenAPurchaseTakesTheCardToEightyPercentOfItsLimit() throws Exception {
+        long customer = newCustomerId();
+        long account = createAccount(customer);
+        deposit(account, "1000.00");
+        long card = idOf(issue(customer, "1000.00").andReturn().getResponse().getContentAsString());
+
+        purchase(card, "799.99", "Shop").andExpect(status().isOk());
+        assertThat(warningsFor(card)).isZero();
+        purchase(card, "0.01", "Shop").andExpect(status().isOk());
+        assertThat(warningsFor(card)).isEqualTo(1);
+        purchase(card, "100.00", "Shop").andExpect(status().isOk());
+        assertThat(warningsFor(card)).as("already past the line").isEqualTo(1);
+
+        // Paid back below the line, then crossing it again warns again.
+        pay(customer, card, account, "400.00").andExpect(status().isOk());
+        purchase(card, "300.00", "Shop").andExpect(status().isOk());
+        assertThat(warningsFor(card)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select payload from outbox_events where aggregate_id = ? and payload like ? "
+                + "order by id desc limit 1", String.class, "card-" + card, "%CARD_LIMIT_NEARLY_REACHED%"))
+                .contains("\"creditLimit\":1000.00").contains("\"amount\":800.00").doesNotContain("Shop");
+    }
+
+    private int warningsFor(long card) {
+        return jdbc.queryForObject("select count(*) from outbox_events where aggregate_id = ? and payload like ?",
+                Integer.class, "card-" + card, "%\"CARD_LIMIT_NEARLY_REACHED\"%");
+    }
+
+    @Test
     void theMinimumPaymentIsFivePercentButNeverMoreThanIsOwed() throws Exception {
         long customer = newCustomerId();
         long card = idOf(issue(customer, "5000.00").andReturn().getResponse().getContentAsString());

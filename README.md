@@ -242,6 +242,10 @@ until it is paid down. A job checks every hour (at a quarter past) for cards wit
 statements missed while the service was down are made when it starts again, one month per run. The
 card's page lists its statements and whether each was paid in full, the minimum was paid, or is overdue.
 
+When a purchase takes what is owed to 80% of the limit (`CARD_LIMIT_WARNING_PERCENT`), the customer
+gets an email warning them. They are warned once per crossing: only after paying back below 80% does
+another crossing warn again. A purchase that would go over the limit is refused, as before.
+
 Purchases, payments and statements with something owed send a transaction email. The API is `/api/cards`
 in `account-service`: `POST` issues (staff); `GET` lists a customer's cards (`customerId=` for staff);
 `/{id}`, `/{id}/transactions` and `/{id}/statements` read; `/{id}/purchases`, `/{id}/limit` and `/{id}/close` are for staff;

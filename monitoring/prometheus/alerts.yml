@@ -66,3 +66,11 @@ groups:
           severity: critical
         annotations:
           summary: "The newest working database backup is {{ $value | humanizeDuration }} old"
+      # Only when copies off this computer are turned on, and none has worked for over a day and a half.
+      - alert: BackupOffsiteCopyTooOld
+        expr: time() - bank_backup_offsite_last_success_timestamp_seconds > 36 * 3600 and bank_backup_offsite_enabled == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No encrypted backup copy has reached the off-computer folder (OneDrive) for {{ $value | humanizeDuration }}. See: docker compose logs backup"

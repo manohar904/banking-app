@@ -265,8 +265,10 @@ services:
 
   # Backs up every database daily and test-restores each backup. See README.md, "Backups".
   # Backups go to a folder on this computer, not a Docker volume, so `down -v` cannot remove them.
+  # With BACKUP_OFFSITE_DIR and BACKUP_ENCRYPTION_PASSWORD set, each one is also copied, encrypted,
+  # to a folder off this computer's disk, such as OneDrive.
   backup:
-    image: postgres:18-alpine
+    build: ./backup
     depends_on: *db-ready
     entrypoint: ["sh", "/backup.sh"]
     command: ["schedule"]
@@ -278,10 +280,15 @@ services:
       BACKUP_TIME: ${BACKUP_TIME:-02:00}
       BACKUP_KEEP: ${BACKUP_KEEP:-7}
       TZ: ${BACKUP_TIMEZONE:-UTC}
+      BACKUP_OFFSITE_DIR: ${BACKUP_OFFSITE_DIR:-}
+      BACKUP_OFFSITE_KEEP: ${BACKUP_OFFSITE_KEEP:-30}
+      BACKUP_ENCRYPTION_PASSWORD: ${BACKUP_ENCRYPTION_PASSWORD:-}
       <<: *postgres-tls
     volumes:
       - ./backup/backup.sh:/backup.sh:ro
       - ${BACKUP_DIR:-./backups}:/backups
+      # Unused unless BACKUP_OFFSITE_DIR is set; the default only gives the mount somewhere to point.
+      - ${BACKUP_OFFSITE_DIR:-./backups/.offsite-not-set}:/offsite
       - *ca-mount
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 9188"]

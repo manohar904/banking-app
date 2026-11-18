@@ -39,6 +39,11 @@ class SecurityConfig {
                 // ScheduledPaymentService checks that a customer only touches their own.
                 .requestMatchers(HttpMethod.GET, "/api/scheduled-payments").hasAnyRole(ServiceSecurity.PEOPLE)
                 .requestMatchers(HttpMethod.POST, "/api/scheduled-payments", "/api/scheduled-payments/*/cancel")
-                .hasAnyRole(ServiceSecurity.PEOPLE));
+                .hasAnyRole(ServiceSecurity.PEOPLE)
+                // Payees: customers and staff both save, list and remove them. PayeeService checks
+                // that a customer only touches their own.
+                .requestMatchers(HttpMethod.GET, "/api/payees").hasAnyRole(ServiceSecurity.PEOPLE)
+                .requestMatchers(HttpMethod.POST, "/api/payees").hasAnyRole(ServiceSecurity.PEOPLE)
+                .requestMatchers(HttpMethod.DELETE, "/api/payees/*").hasAnyRole(ServiceSecurity.PEOPLE));
     }
 }

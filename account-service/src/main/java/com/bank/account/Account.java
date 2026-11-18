@@ -12,6 +12,7 @@ import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -56,6 +57,9 @@ public class Account {
     @Column(nullable = false)
     private Instant updatedAt;
 
+    /** Savings only: the day the next interest payment is due, for the month before it. */
+    private LocalDate nextInterestOn;
+
     public Account(Long customerId, String accountNumber, AccountType type) {
         this.customerId = customerId;
         this.accountNumber = accountNumber;
@@ -74,6 +78,14 @@ public class Account {
             throw new InsufficientFundsException("Insufficient funds in account " + accountNumber + ".");
         }
         balance = balance.subtract(validAmount);
+    }
+
+    /** Sets when the next interest payment is due. Only savings accounts earn interest. */
+    public void nextInterestOn(LocalDate day) {
+        if (type != AccountType.SAVINGS) {
+            throw new IllegalStateException("Only savings accounts earn interest.");
+        }
+        nextInterestOn = day;
     }
 
     public boolean hasZeroBalance() {

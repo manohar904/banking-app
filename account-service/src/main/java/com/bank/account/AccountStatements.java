@@ -122,6 +122,7 @@ public class AccountStatements {
             case LOAN_PAYOUT -> "Loan paid out";
             case LOAN_REPAYMENT -> "Loan repayment";
             case CARD_PAYMENT -> "Credit card payment";
+            case INTEREST -> "Interest";
         };
     }
 

@@ -6,6 +6,7 @@ import com.bank.account.dto.MoneyRequest;
 import com.bank.account.dto.TransactionResponse;
 import com.bank.account.dto.TransferAllowanceResponse;
 import com.bank.account.dto.TransferRequest;
+import com.bank.account.savings.SavingsInterest;
 import com.bank.account.statement.StatementPdf;
 import com.bank.common.security.Callers;
 import jakarta.validation.Valid;
@@ -41,6 +42,7 @@ public class AccountController {
     private final AccountService accountService;
     private final CustomerTransfers customerTransfers;
     private final AccountStatements accountStatements;
+    private final SavingsInterest savingsInterest;
 
     @PostMapping
     public ResponseEntity<AccountResponse> create(@Valid @RequestBody CreateAccountRequest request) {
@@ -59,7 +61,9 @@ public class AccountController {
     @PreAuthorize("@access.canViewAccount(authentication, #id)")
     @GetMapping("/{id}")
     public AccountResponse get(@PathVariable Long id) {
-        return accountService.get(id);
+        AccountResponse account = accountService.get(id);
+        return account.type() == AccountType.SAVINGS
+                ? account.withAnnualInterestRate(savingsInterest.annualRate()) : account;
     }
 
     /** For staff finding an account from its number. Customers see their own accounts in the list. */

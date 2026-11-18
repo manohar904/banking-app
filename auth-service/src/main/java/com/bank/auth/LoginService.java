@@ -26,13 +26,18 @@ public class LoginService {
     private final SignInLimiter signInLimiter;
     private final JdbcTemplate jdbc;
 
-    /** Creates the customer's login, or resets the password if they already have one. */
+    /**
+     * Creates the customer's login, or resets the password if they already have one. This is also how
+     * staff let back in a customer who lost access to their email, so it turns two-step sign-in off;
+     * the customer can turn it on again themselves.
+     */
     public void setCustomerPassword(Long customerId, String password) {
         String email = customerService.emailOf(customerId);
         String hash = encode(password);
         AppUser user = userRepository.findByCustomerId(customerId)
                 .orElseGet(() -> AppUser.customer(customerId, email, hash));
         user.changePasswordHash(hash);
+        user.turnOffTwoStep();
         // Flushed here so an email already used by a staff login is reported as a 409.
         userRepository.saveAndFlush(user);
         // Staff have just helped this person, so they should not have to wait out the limit as well.

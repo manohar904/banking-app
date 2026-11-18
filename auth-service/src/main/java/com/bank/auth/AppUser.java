@@ -47,6 +47,10 @@ public class AppUser {
     @Column(nullable = false)
     private Instant updatedAt;
 
+    /** After the password, a code sent to the email must be entered too. */
+    @Column(nullable = false)
+    private boolean twoStepEnabled;
+
     private AppUser(String email, String passwordHash, Role role, Long customerId) {
         this.email = email;
         this.passwordHash = passwordHash;
@@ -62,11 +66,23 @@ public class AppUser {
         return new AppUser(email, passwordHash, Role.CUSTOMER, customerId);
     }
 
+    /** Codes would go to the new address, which nobody has shown arrives yet, so two-step is turned off. */
     public void changeEmail(String email) {
+        if (!email.equals(this.email)) {
+            this.twoStepEnabled = false;
+        }
         this.email = email;
     }
 
     public void changePasswordHash(String passwordHash) {
         this.passwordHash = passwordHash;
+    }
+
+    public void turnOnTwoStep() {
+        this.twoStepEnabled = true;
+    }
+
+    public void turnOffTwoStep() {
+        this.twoStepEnabled = false;
     }
 }

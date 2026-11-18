@@ -179,6 +179,23 @@ timing doesn't reveal it either, and only a hash of the link is stored. Each add
 15 minutes. Changing a password or email cancels an outstanding link. Sessions already signed in are not
 ended by a reset; they expire after 30 minutes unused.
 
+### Two-step sign-in
+
+Anyone can turn on **Two-step sign-in** from the menu at the top. After the password, they then also
+enter a 6-digit code emailed to them, so a stolen password alone isn't enough. Turning it on sends a
+code first, which proves their email arrives; turning it off takes their password. It is each person's
+choice rather than forced on everyone, so nobody with a wrong or made-up email is locked out.
+
+A code works once, for 10 minutes, and is thrown away after 5 wrong tries; a new sign-in replaces it.
+Until the code is entered the sign-in still counts towards the email's limit of 5 attempts in 15 minutes,
+so knowing the password doesn't allow unlimited guesses. Only a hash of each code is stored. The session
+is only signed in, with a new session id, once the code is right.
+
+Staff using **Set password** for a customer turns it off for them, as the way back in for someone who
+lost access to their email; changing a login's email turns it off too. Codes use the same email account
+as alerts; if email is later turned off, people with two-step on can sign in with their password alone
+(`auth-service` logs a warning), rather than everyone, staff included, being locked out.
+
 ### Transaction emails
 
 Customers get an email for every deposit, withdrawal, transfer and loan payment, unless staff turn it off on the

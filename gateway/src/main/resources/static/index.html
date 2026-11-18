@@ -19,6 +19,7 @@
       <button id="audit-log" type="button" hidden>Audit log</button>
       <button id="help" type="button">Help</button>
       <button id="change-password" type="button">Change password</button>
+      <button id="two-step" type="button">Two-step sign-in</button>
       <button id="sign-out" type="button">Sign out</button>
     </div>
   </header>
@@ -45,6 +46,18 @@
       </label>
       <div class="actions">
         <button id="forgot-password" type="button">Forgot password?</button>
+        <button class="primary" type="submit">Sign in</button>
+      </div>
+    </form>
+    <form id="code-form" class="panel login-panel" novalidate hidden>
+      <h2>Enter your code</h2>
+      <p id="code-sent-to" class="muted"></p>
+      <p class="form-error" data-form-error role="alert" hidden></p>
+      <label>Code
+        <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 digits" required>
+      </label>
+      <div class="actions">
+        <button id="code-back" type="button">Back</button>
         <button class="primary" type="submit">Sign in</button>
       </div>
     </form>
@@ -241,6 +254,26 @@
       <div class="actions">
         <button type="button" data-cancel>Cancel</button>
         <button class="primary" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="two-step-dialog">
+    <form id="two-step-form" method="dialog" novalidate>
+      <h2>Two-step sign-in</h2>
+      <p id="two-step-status" class="muted"></p>
+      <p class="form-error" data-form-error hidden></p>
+      <label id="two-step-code-field" hidden>Code from the email
+        <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 digits">
+        <span class="field-error" data-error-for="code"></span>
+      </label>
+      <label id="two-step-password-field" hidden>Your password
+        <input name="password" type="password" autocomplete="current-password">
+        <span class="field-error" data-error-for="password"></span>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Close</button>
+        <button id="two-step-action" class="primary" type="submit"></button>
       </div>
     </form>
   </dialog>

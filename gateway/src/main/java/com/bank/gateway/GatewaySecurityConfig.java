@@ -44,6 +44,9 @@ public class GatewaySecurityConfig {
                         // For people who cannot sign in. Every other API call needs a session.
                         .requestMatchers(HttpMethod.POST, "/api/auth/password-reset", "/api/auth/password-reset/confirm")
                         .permitAll()
+                        // The second step of two-step sign-in, before the session is signed in. It only
+                        // works for a session whose first step, the password, was right.
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login/code").permitAll()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().denyAll())
                 // The front end reads the token from a cookie and sends it back in a header.
@@ -57,7 +60,9 @@ public class GatewaySecurityConfig {
                         .successHandler((request, response, authentication) ->
                                 response.setStatus(HttpStatus.NO_CONTENT.value()))
                         .failureHandler((request, response, exception) -> {
-                            if (exception instanceof LockedException) {
+                            if (exception instanceof SignInCodeRequiredException codeSent) {
+                                SignInCodeController.codeSent(request, response, codeSent);
+                            } else if (exception instanceof LockedException) {
                                 // Also answered for emails with no account, so it reveals nothing.
                                 Problems.write(response, HttpStatus.TOO_MANY_REQUESTS,
                                         "Too many sign-in attempts. Please wait up to 15 minutes and try again.");

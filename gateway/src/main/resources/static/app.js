@@ -27,6 +27,7 @@ function resetState() {
     findAccount: false,
     help: null,
     loans: [],
+    scheduled: [],
     loan: null,
     cards: [],
     card: null,
@@ -267,17 +268,19 @@ async function selectCustomer(id) {
   state.loanBoard = null;
   const version = ++selectionVersion;
   try {
-    const [customer, accounts, loans, cards] = await Promise.all([
+    const [customer, accounts, loans, cards, scheduled] = await Promise.all([
       api(`/api/customers/${id}`),
       fetchAllAccounts(id),
       fetchLoans(id),
       fetchCards(id),
+      fetchScheduled(id),
     ]);
     if (version !== selectionVersion) return;
     state.customer = customer;
     state.accounts = accounts;
     state.loans = loans;
     state.cards = cards;
+    state.scheduled = scheduled;
     state.account = null;
     state.loan = null;
     state.card = null;
@@ -542,6 +545,7 @@ function customerPanel() {
       ? el("ul", { class: "account-list" }, ...accountItems)
       : el("p", { class: "empty" }, "This customer has no accounts yet."),
     ...cardsSection(),
+    ...scheduledSection(),
     ...loansSection());
 }
 
@@ -1385,6 +1389,78 @@ function closeCard() {
   renderDetail();
 }
 
+/* ---------- Scheduled payments ---------- */
+
+async function fetchScheduled(customerId) {
+  try {
+    return await api(`/api/scheduled-payments?customerId=${customerId}`);
+  } catch {
+    // The rest of the customer's page still works without them.
+    return [];
+  }
+}
+
+async function refreshScheduled() {
+  state.scheduled = await fetchScheduled(state.customer.id);
+  renderCustomers();
+}
+
+const ordinal = (day) => `${day}${[11, 12, 13].includes(day) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[day % 10] ?? "th")}`;
+
+function scheduledSection() {
+  const active = state.scheduled.filter((payment) => payment.status === "ACTIVE");
+  const rows = active.map((payment) => el("tr", {},
+    el("td", {}, el("span", { class: "number" }, payment.toAccountNumber),
+      el("small", { class: "muted block" }, payment.reference ?? `from ${payment.fromAccountNumber ?? "an account"}`)),
+    el("td", { class: "right number" }, moneyFormat.format(payment.amount)),
+    el("td", {}, `${ordinal(payment.dayOfMonth)} of each month`,
+      el("small", { class: "muted block" }, `Next: ${formatDay(payment.nextPaymentOn)}`)),
+    el("td", {}, payment.problem
+      ? el("span", { class: "badge badge-danger", title: payment.problem }, "Not sent")
+      : payment.lastSentOn
+        ? el("span", { class: "badge badge-money" }, `Sent ${formatDay(payment.lastSentOn)}`)
+        : el("span", { class: "badge badge-off" }, "Not sent yet"),
+      payment.problem ? el("small", { class: "muted block" }, payment.problem) : null),
+    el("td", { class: "right" }, el("button", { type: "button", onclick: () => confirmCancelScheduled(payment) }, "Cancel"))));
+  return [
+    el("div", { class: "panel-head spaced-top" },
+      el("h3", {}, "Scheduled payments"),
+      state.accounts.length ? el("button", { type: "button", onclick: openScheduledDialog }, "Set up payment") : null),
+    rows.length
+      ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {},
+            el("th", { scope: "col" }, "Pay to"),
+            el("th", { scope: "col", class: "right" }, "Amount"),
+            el("th", { scope: "col" }, "When"),
+            el("th", { scope: "col" }, "Last payment"),
+            el("th", { scope: "col", class: "right" }, ""))),
+          el("tbody", {}, ...rows)))
+      : el("p", { class: "empty" }, "No monthly payments set up. They are sent automatically on the day you choose."),
+  ];
+}
+
+function openScheduledDialog() {
+  const form = $("scheduled-form");
+  form.reset();
+  showFormError(form, null);
+  clearFieldErrors(form);
+  form.elements.fromAccountId.replaceChildren(...state.accounts.map((account) =>
+    el("option", { value: account.id }, `${titleCase(account.type)} ${account.accountNumber} (${moneyFormat.format(account.balance)})`)));
+  $("scheduled-dialog-message").textContent =
+    "Sent every month on the day you choose, counting towards the daily transfer limit. If there isn't enough money it is tried again for three days, then that month is skipped.";
+  $("scheduled-dialog").showModal();
+}
+
+function confirmCancelScheduled(payment) {
+  openConfirm("Cancel this payment?",
+    `${moneyFormat.format(payment.amount)} to ${payment.toAccountNumber} on the ${ordinal(payment.dayOfMonth)} of each month will no longer be sent.`,
+    async () => {
+      await api(`/api/scheduled-payments/${payment.id}/cancel`, { method: "POST" });
+      toast("Scheduled payment cancelled.");
+      await refreshScheduled();
+    }, "Cancel payment");
+}
+
 function cardsSection() {
   const items = state.cards.map((card) => el("li", {},
     el("button", {
@@ -1954,6 +2030,27 @@ $("card-form").onsubmit = (event) => {
     });
     toast("Card issued.");
     await refreshAfterCardChange(card);
+  });
+};
+
+$("scheduled-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  submitDialog($("scheduled-dialog"), form, async () => {
+    const day = form.elements.dayOfMonth.value.trim();
+    await api("/api/scheduled-payments", {
+      method: "POST",
+      // The amount is sent as a string, so no cents are lost on the way.
+      body: {
+        fromAccountId: Number(form.elements.fromAccountId.value),
+        toAccountNumber: form.elements.toAccountNumber.value.trim(),
+        amount: form.elements.amount.value.trim(),
+        dayOfMonth: /^\d{1,2}$/.test(day) ? Number(day) : null,
+        reference: form.elements.reference.value.trim() || null,
+      },
+    });
+    toast("Monthly payment set up.");
+    await refreshScheduled();
   });
 };
 

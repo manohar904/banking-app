@@ -34,6 +34,11 @@ class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/cards/*/payments", "/api/cards/*/freeze",
                         "/api/cards/*/unfreeze")
                 .hasAnyRole(ServiceSecurity.PEOPLE)
-                .requestMatchers("/api/cards", "/api/cards/**").hasRole("STAFF"));
+                .requestMatchers("/api/cards", "/api/cards/**").hasRole("STAFF")
+                // Scheduled payments: customers and staff both set up, list and cancel them.
+                // ScheduledPaymentService checks that a customer only touches their own.
+                .requestMatchers(HttpMethod.GET, "/api/scheduled-payments").hasAnyRole(ServiceSecurity.PEOPLE)
+                .requestMatchers(HttpMethod.POST, "/api/scheduled-payments", "/api/scheduled-payments/*/cancel")
+                .hasAnyRole(ServiceSecurity.PEOPLE));
     }
 }

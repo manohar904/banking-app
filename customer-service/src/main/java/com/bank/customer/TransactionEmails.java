@@ -105,6 +105,7 @@ public class TransactionEmails {
             case "CARD_PAYMENT_TAKEN" -> "Card payment of %s from your account ending %s";
             case "CARD_STATEMENT" -> "Your statement: %s owed on your card ending %s";
             case "CARD_LIMIT_NEARLY_REACHED" -> "You now owe %s on your card ending %s, close to its limit";
+            case "SCHEDULED_PAYMENT_NOT_SENT" -> "Scheduled payment of %s could not be sent from your account ending %s";
             default -> null;
         };
     }

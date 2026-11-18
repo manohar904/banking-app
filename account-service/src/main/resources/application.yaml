@@ -75,3 +75,10 @@ bank:
       # A statement is made on the first of each month. Checked every hour, at a quarter past.
       enabled: true
       cron: "0 15 * * * *"
+  scheduled-payments:
+    # Monthly payments customers set up are sent on their day. Checked every hour, at 25 past.
+    enabled: true
+    cron: "0 25 * * * *"
+    # A payment that cannot be sent (not enough money, over the daily limit) is tried every hour for
+    # this many days after its day, then that month is skipped.
+    give-up-after-days: 3

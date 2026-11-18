@@ -7,6 +7,8 @@ import com.bank.account.dto.CreateAccountRequest;
 import com.bank.account.dto.TransactionResponse;
 import com.bank.account.loan.LoanRepository;
 import com.bank.account.loan.LoanStatus;
+import com.bank.account.scheduled.ScheduledPayment;
+import com.bank.account.scheduled.ScheduledPaymentRepository;
 import com.bank.common.ConflictException;
 import com.bank.common.ResourceNotFoundException;
 import com.bank.common.events.DomainEvents;
@@ -38,6 +40,7 @@ public class AccountService {
     private final DomainEvents events;
     private final LoanRepository loanRepository;
     private final CardRepository cardRepository;
+    private final ScheduledPaymentRepository scheduledPayments;
     private final SecureRandom random = new SecureRandom();
 
     public AccountResponse create(CreateAccountRequest request) {
@@ -153,6 +156,9 @@ public class AccountService {
         }
         if (loanRepository.existsByAccountIdAndStatusIn(id, EnumSet.of(LoanStatus.REQUESTED, LoanStatus.ACTIVE))) {
             throw new ConflictException("This account has a loan request waiting. Cancel or reject it first.");
+        }
+        if (scheduledPayments.existsByFromAccountIdAndStatus(id, ScheduledPayment.Status.ACTIVE)) {
+            throw new ConflictException("This account has scheduled payments. Cancel them first.");
         }
         accountRepository.delete(account);
         events.record("ACCOUNT_CLOSED", id, Map.of("customerId", account.getCustomerId()));

@@ -270,6 +270,24 @@ Only the account's owner and staff can download a statement. The customer's name
 only their last four digits. The PDFs are made when asked for (OpenPDF, built-in fonts only) and are
 not stored.
 
+### Scheduled payments
+
+A customer (or staff, for them) can set up a monthly payment from one of their accounts to any account
+number, on a day from 1 to 28, with an optional reference such as "Rent". It appears under **Scheduled
+payments** on the customer's page, with the next date and how the last one went, and can be cancelled
+there.
+
+A job checks every hour (at 25 past) for payments due. Each is sent as the customer's own transfer, so it
+counts towards their daily transfer limit (`CUSTOMER_DAILY_TRANSFER_LIMIT`) and is held to it; a payment
+can't be set up for more than the limit. When it can't be sent (not enough money, over the limit, or the
+account to pay is gone) it is tried every hour for three days (`bank.scheduled-payments.give-up-after-days`),
+then that month is skipped. The customer gets one email per missed payment day, and the page shows why.
+Payment days missed while the service was down are sent once when it starts again, not once per day missed.
+
+A customer can have 10 active payments. An account with an active one can't be deleted until it is
+cancelled. The API is `/api/scheduled-payments` in `account-service`: `GET` lists (`customerId=` for staff),
+`POST` sets one up, `POST /{id}/cancel` cancels. The audit log names them `scheduled-<id>`.
+
 ### Help
 
 Everyone has a **Help** button. Customers see answers to common questions and can ask the bank their

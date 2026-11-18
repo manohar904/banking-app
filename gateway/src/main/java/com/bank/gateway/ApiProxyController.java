@@ -150,7 +150,8 @@ public class ApiProxyController {
         }
         if (path.equals("/api/accounts") || path.startsWith("/api/accounts/")
                 || path.equals("/api/loans") || path.startsWith("/api/loans/")
-                || path.equals("/api/cards") || path.startsWith("/api/cards/")) {
+                || path.equals("/api/cards") || path.startsWith("/api/cards/")
+                || path.equals("/api/scheduled-payments") || path.startsWith("/api/scheduled-payments/")) {
             return accountUrl;
         }
         return null;

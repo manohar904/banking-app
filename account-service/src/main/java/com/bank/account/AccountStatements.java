@@ -10,6 +10,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
@@ -111,6 +112,57 @@ public class AccountStatements {
                 .summary(soFar ? "Balance now" : "Balance at the end", StatementPdf.money(closing))
                 .footnote("If anything here looks wrong, please contact the bank through Help.");
         return new File("statement-" + account.getAccountNumber() + "-" + month + ".pdf", pdf.toBytes());
+    }
+
+    /** One calendar month's money in and out, and the balance at its end (or now, for this month). */
+    public record MonthSummary(String month, BigDecimal moneyIn, BigDecimal moneyOut, BigDecimal endBalance) {
+    }
+
+    /** Most months a summary can cover. */
+    public static final int MAX_SUMMARY_MONTHS = 24;
+
+    /**
+     * Money in and out for each of the last few months, oldest first, ending with this one. Months before
+     * the account was opened are left out. Who may see the account is checked by the caller.
+     */
+    public List<MonthSummary> summary(Long accountId, int months) {
+        if (months < 1 || months > MAX_SUMMARY_MONTHS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Ask for between 1 and " + MAX_SUMMARY_MONTHS + " months.");
+        }
+        Account account = accounts.findById(accountId)
+                .orElseThrow(() -> new ResourceNotFoundException("Account " + accountId + " not found."));
+        ZoneId zone = clock.getZone();
+        YearMonth now = YearMonth.now(clock);
+        YearMonth opened = YearMonth.from(account.getCreatedAt().atZone(zone));
+        YearMonth first = now.minusMonths(months - 1L);
+        if (first.isBefore(opened)) {
+            first = opened;
+        }
+        Instant from = first.atDay(1).atStartOfDay(zone).toInstant();
+        BigDecimal balance = ledger.findFirstByAccountIdAndCreatedAtLessThanOrderByIdDesc(accountId, from)
+                .map(AccountTransaction::getBalanceAfter).orElse(BigDecimal.ZERO.setScale(2));
+        List<AccountTransaction> entries = ledger.findByAccountIdAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderById(
+                accountId, from, now.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant());
+
+        List<MonthSummary> result = new ArrayList<>();
+        int next = 0;
+        for (YearMonth month = first; !month.isAfter(now); month = month.plusMonths(1)) {
+            Instant end = month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant();
+            BigDecimal in = BigDecimal.ZERO.setScale(2);
+            BigDecimal out = BigDecimal.ZERO.setScale(2);
+            while (next < entries.size() && entries.get(next).getCreatedAt().isBefore(end)) {
+                AccountTransaction entry = entries.get(next++);
+                if (MONEY_OUT.contains(entry.getType())) {
+                    out = out.add(entry.getAmount());
+                } else {
+                    in = in.add(entry.getAmount());
+                }
+                balance = entry.getBalanceAfter();
+            }
+            result.add(new MonthSummary(month.toString(), in, out, balance));
+        }
+        return result;
     }
 
     private static String describe(AccountTransaction entry) {

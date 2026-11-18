@@ -20,6 +20,7 @@ function resetState() {
     accounts: [],
     account: null,
     allowance: null,
+    summary: null,
     transactions: { content: [], page: null },
     transactionPage: 0,
     detailError: null,
@@ -314,16 +315,19 @@ async function fetchAllAccounts(customerId) {
 async function selectAccount(id, transactionPage = 0) {
   const version = ++selectionVersion;
   try {
-    const [account, transactions, allowance] = await Promise.all([
+    const [account, transactions, allowance, summary] = await Promise.all([
       api(`/api/accounts/${id}`),
       api(`/api/accounts/${id}/transactions?page=${transactionPage}&size=${TRANSACTION_PAGE_SIZE}`),
       api(`/api/accounts/${id}/transfer-allowance`),
+      // The rest of the page still works without the chart.
+      api(`/api/accounts/${id}/summary?months=12`).catch(() => null),
     ]);
     if (version !== selectionVersion) return;
     state.account = account;
     state.loan = null;
     state.card = null;
     state.allowance = allowance;
+    state.summary = summary;
     state.transactions = transactions;
     state.transactionPage = transactionPage;
     state.accounts = state.accounts.map((existing) => (existing.id === account.id ? account : existing));
@@ -714,6 +718,7 @@ function accountPanel() {
           el("label", {}, "Amount", amount), transfer),
     amountError,
     allowance ? el("p", { class: "muted allowance" }, allowanceText(allowance)) : null,
+    spendingSummary(state.summary),
     accountStatementForm(account),
     el("h3", { class: "spaced-top" }, "Transactions"),
     rows.length
@@ -739,6 +744,145 @@ function statementMonths(openedAt) {
     months.push({ value, text: months.length === 0 ? `${label.format(date)} (so far)` : label.format(date) });
   }
   return months;
+}
+
+/* ---------- Money in and out chart ---------- */
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svg(tag, attributes = {}, ...children) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+  node.append(...children.filter((child) => child !== null));
+  return node;
+}
+
+const monthLabel = (month, style = "short") =>
+  new Intl.DateTimeFormat(undefined, { month: style, year: style === "short" ? undefined : "numeric" })
+    .format(new Date(`${month}-15T12:00:00`));
+
+/** A round number just above the largest value, so the top gridline is a readable amount. */
+function niceMax(value) {
+  if (value <= 0) return 1;
+  const step = 10 ** Math.floor(Math.log10(value));
+  // Each divides into four round gridline steps, and none leaves much of the chart empty.
+  return [1, 1.2, 1.6, 2, 2.4, 3, 4, 5, 6, 8, 10].map((m) => m * step).find((candidate) => candidate >= value);
+}
+
+/** A bar with its data end rounded (4px) and its baseline end square. */
+function barPath(x, y, width, height) {
+  const r = Math.min(4, width / 2, height);
+  return `M${x},${y + height}V${y + r}Q${x},${y} ${x + r},${y}H${x + width - r}Q${x + width},${y} ${x + width},${y + r}V${y + height}Z`;
+}
+
+const compactMoney = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+
+function spendingSummary(allMonths) {
+  if (!allMonths?.length) return null;
+  // On a phone, half a year at a size that can be read; the table still has all of them.
+  const narrow = window.matchMedia("(max-width: 640px)").matches;
+  const months = narrow ? allMonths.slice(-6) : allMonths;
+  const hasMovement = months.some((m) => Number(m.moneyIn) > 0 || Number(m.moneyOut) > 0);
+  const legend = el("div", { class: "chart-legend" },
+    el("span", { class: "chart-key" }, el("span", { class: "chart-swatch swatch-in", "aria-hidden": "true" }), "Money in"),
+    el("span", { class: "chart-key" }, el("span", { class: "chart-swatch swatch-out", "aria-hidden": "true" }), "Money out"));
+  if (!hasMovement) {
+    return el("div", {},
+      el("h3", { class: "spaced-top" }, "Money in and out"),
+      el("p", { class: "empty" }, "No money has moved in or out yet. Each month's totals will show here."));
+  }
+
+  const width = narrow ? 360 : 640;
+  const height = narrow ? 200 : 220;
+  const pad = { top: 12, right: 8, bottom: 26, left: 48 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const top = niceMax(Math.max(...months.flatMap((m) => [Number(m.moneyIn), Number(m.moneyOut)])));
+  const y = (value) => pad.top + plotHeight - (value / top) * plotHeight;
+  const slot = plotWidth / months.length;
+  const barWidth = Math.max(4, Math.min(18, (slot - 10) / 2));
+  const gap = 2;
+
+  const chart = el("div", { class: "chart" });
+  const tooltip = el("div", { class: "chart-tooltip", role: "status", hidden: "" });
+  const hover = svg("rect", { class: "chart-hover", y: pad.top, height: plotHeight, width: slot, rx: 4, visibility: "hidden" });
+  const plot = svg("svg", {
+    viewBox: `0 0 ${width} ${height}`, role: "img",
+    "aria-label": `Money in and out for each of the last ${months.length} months. The table below has the same figures.`,
+  });
+
+  for (let i = 0; i <= 4; i++) {
+    const value = (top / 4) * i;
+    plot.append(
+      svg("line", { class: "chart-grid", x1: pad.left, x2: width - pad.right, y1: y(value), y2: y(value) }),
+      svg("text", { class: "chart-axis-text", x: pad.left - 6, y: y(value) + 4, "text-anchor": "end" }, compactMoney.format(value)));
+  }
+  plot.append(hover);
+
+  const showTooltip = (month, index) => {
+    hover.setAttribute("x", pad.left + index * slot);
+    hover.setAttribute("visibility", "visible");
+    tooltip.replaceChildren(
+      el("strong", {}, monthLabel(month.month, "long")),
+      el("div", { class: "chart-row" }, el("span", {}, el("span", { class: "chart-swatch swatch-in" }), "Money in"), moneyFormat.format(month.moneyIn)),
+      el("div", { class: "chart-row" }, el("span", {}, el("span", { class: "chart-swatch swatch-out" }), "Money out"), moneyFormat.format(month.moneyOut)),
+      el("div", { class: "chart-row" }, el("span", {}, "Balance at the end"), moneyFormat.format(month.endBalance)));
+    tooltip.hidden = false;
+    // CSSOM, not a style attribute, so the page's content security policy allows it.
+    const box = chart.getBoundingClientRect();
+    // Beside the month's column, not over its bars: to the right if it fits, otherwise to the left.
+    const columnLeft = ((pad.left + index * slot) / width) * box.width;
+    const columnRight = ((pad.left + (index + 1) * slot) / width) * box.width;
+    const left = columnRight + 8 + tooltip.offsetWidth <= box.width
+      ? columnRight + 8 : Math.max(columnLeft - 8 - tooltip.offsetWidth, 0);
+    tooltip.style.left = `${left}px`;
+    // Inside the chart's top edge, so it never covers the heading or legend above.
+    tooltip.style.top = `${(pad.top / height) * box.height}px`;
+  };
+  const hideTooltip = () => {
+    tooltip.hidden = true;
+    hover.setAttribute("visibility", "hidden");
+  };
+
+  months.forEach((month, index) => {
+    const centre = pad.left + (index + 0.5) * slot;
+    const inValue = Number(month.moneyIn);
+    const outValue = Number(month.moneyOut);
+    if (inValue > 0) {
+      const h = Math.max(1, (inValue / top) * plotHeight);
+      plot.append(svg("path", { class: "bar-in", d: barPath(centre - gap / 2 - barWidth, pad.top + plotHeight - h, barWidth, h) }));
+    }
+    if (outValue > 0) {
+      const h = Math.max(1, (outValue / top) * plotHeight);
+      plot.append(svg("path", { class: "bar-out", d: barPath(centre + gap / 2, pad.top + plotHeight - h, barWidth, h) }));
+    }
+    // Only every other month's name when they would crowd.
+    if (months.length <= 8 || index % 2 === months.length % 2 || index === months.length - 1) {
+      plot.append(svg("text", { class: "chart-axis-text", x: centre, y: height - 8, "text-anchor": "middle" }, monthLabel(month.month)));
+    }
+    // The whole month's column answers the pointer, not just the thin bars.
+    const hit = svg("rect", { class: "chart-hit", x: pad.left + index * slot, y: pad.top, width: slot, height: plotHeight + pad.bottom });
+    hit.addEventListener("pointerenter", () => showTooltip(month, index));
+    hit.addEventListener("pointerleave", hideTooltip);
+    plot.append(hit);
+  });
+  chart.append(plot, tooltip);
+
+  const table = el("details", { class: "chart-table" },
+    el("summary", {}, "Show as a table"),
+    el("div", { class: "table-wrap" }, el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", { scope: "col" }, "Month"),
+        el("th", { scope: "col", class: "right" }, "Money in"),
+        el("th", { scope: "col", class: "right" }, "Money out"),
+        el("th", { scope: "col", class: "right" }, "Balance at the end"))),
+      el("tbody", {}, ...[...allMonths].reverse().map((month) => el("tr", {},
+        el("td", {}, monthLabel(month.month, "long")),
+        el("td", { class: "right number" }, moneyFormat.format(month.moneyIn)),
+        el("td", { class: "right number" }, moneyFormat.format(month.moneyOut)),
+        el("td", { class: "right number" }, moneyFormat.format(month.endBalance))))))));
+
+  return el("div", {}, el("h3", { class: "spaced-top" }, "Money in and out"), legend, chart, table);
 }
 
 function accountStatementForm(account) {

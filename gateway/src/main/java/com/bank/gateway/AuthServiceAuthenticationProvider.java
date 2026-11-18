@@ -3,8 +3,11 @@ package com.bank.gateway;
 import com.bank.common.security.InternalClients;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -22,6 +25,10 @@ import org.springframework.web.client.RestClientException;
 @Component
 public class AuthServiceAuthenticationProvider implements AuthenticationProvider {
 
+    /** A signed-in user, or for two-step sign-in the code that was sent instead. */
+    private record Answer(Long userId, String email, String role, Long customerId, UUID codeId, String sentTo) {
+    }
+
     private final RestClient authService;
 
     AuthServiceAuthenticationProvider(InternalClients clients, @Value("${bank.services.auth-url}") String authUrl) {
@@ -30,16 +37,15 @@ public class AuthServiceAuthenticationProvider implements AuthenticationProvider
 
     @Override
     public Authentication authenticate(Authentication authentication) {
+        ResponseEntity<Answer> answer;
         try {
-            SignedInUser user = authService.post().uri("/internal/authentications")
+            answer = authService.post().uri("/internal/authentications")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("email", authentication.getName(),
                             "password", String.valueOf(authentication.getCredentials()),
                             "clientAddress", clientAddress(authentication)))
                     .retrieve()
-                    .body(SignedInUser.class);
-            return UsernamePasswordAuthenticationToken.authenticated(user, null,
-                    List.of(new SimpleGrantedAuthority("ROLE_" + user.role())));
+                    .toEntity(Answer.class);
         } catch (HttpClientErrorException.Unauthorized e) {
             throw new BadCredentialsException("Incorrect email or password.");
         } catch (HttpClientErrorException.TooManyRequests e) {
@@ -47,6 +53,20 @@ public class AuthServiceAuthenticationProvider implements AuthenticationProvider
         } catch (RestClientException e) {
             throw new AuthenticationServiceException("The auth service could not check the password.", e);
         }
+        Answer body = answer.getBody();
+        if (body == null) {
+            throw new AuthenticationServiceException("The auth service gave no answer.");
+        }
+        if (answer.getStatusCode().isSameCodeAs(HttpStatus.ACCEPTED)) {
+            throw new SignInCodeRequiredException(body.codeId(), body.sentTo());
+        }
+        return signedIn(new SignedInUser(body.userId(), body.email(), body.role(), body.customerId()));
+    }
+
+    /** What the session holds for a signed-in user. */
+    static Authentication signedIn(SignedInUser user) {
+        return UsernamePasswordAuthenticationToken.authenticated(user, null,
+                List.of(new SimpleGrantedAuthority("ROLE_" + user.role())));
     }
 
     /**

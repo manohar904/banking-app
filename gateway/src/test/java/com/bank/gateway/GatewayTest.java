@@ -437,6 +437,67 @@ class GatewayTest {
     }
 
     /** Keeps cookies and sends the CSRF token back, as the front end does. */
+    @Test
+    void withTwoStepSignInTheSessionIsOnlySignedInOnceTheCodeIsRight() throws Exception {
+        auth.twoStep.set(true);
+
+        HttpResponse<String> first = browser.signIn();
+        assertThat(first.statusCode()).isEqualTo(202);
+        assertThat(first.body()).contains("\"codeRequired\":true").contains("a**@example.com")
+                .doesNotContain(StubService.CODE_ID);
+        assertThat(browser.get("/api/customers").statusCode()).isEqualTo(401);
+
+        HttpResponse<String> wrong = browser.write("POST", "/api/auth/login/code", "{\"code\": \"111111\"}");
+        assertThat(wrong.statusCode()).isEqualTo(401);
+        assertThat(wrong.body()).contains("not right");
+        assertThat(browser.get("/api/customers").statusCode()).isEqualTo(401);
+
+        String sessionBefore = browser.cookie("SESSION");
+        assertThat(browser.write("POST", "/api/auth/login/code", "{\"code\": \"123456\"}").statusCode()).isEqualTo(204);
+        assertThat(auth.lastCodeBody.get()).contains(StubService.CODE_ID).contains("123456");
+        assertThat(browser.cookie("SESSION")).as("a new session id once signed in").isNotEqualTo(sessionBefore);
+        assertThat(browser.get("/api/customers").statusCode()).isEqualTo(200);
+        Jwt token = tokens.decoder().decode(customers.lastAuthorization.get().substring("Bearer ".length()));
+        assertThat(token.getClaimAsString("role")).isEqualTo("CUSTOMER");
+        assertThat(token.<Number>getClaim("customerId").longValue()).isEqualTo(42L);
+    }
+
+    @Test
+    void aCodeWithoutARightPasswordFirstIsRefused() throws Exception {
+        HttpResponse<String> response = browser.write("POST", "/api/auth/login/code", "{\"code\": \"123456\"}");
+
+        assertThat(response.statusCode()).isEqualTo(401);
+        assertThat(response.body()).contains("sign in again");
+        assertThat(auth.lastCodeBody.get()).isNull();
+        assertThat(browser.get("/api/customers").statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void anExpiredCodeMeansStartingAgainFromThePassword() throws Exception {
+        auth.twoStep.set(true);
+        browser.signIn();
+
+        HttpResponse<String> expired = browser.write("POST", "/api/auth/login/code", "{\"code\": \"999999\"}");
+        assertThat(expired.statusCode()).isEqualTo(401);
+        assertThat(expired.body()).contains("sign in again");
+
+        auth.lastCodeBody.set(null);
+        assertThat(browser.write("POST", "/api/auth/login/code", "{\"code\": \"123456\"}").statusCode()).isEqualTo(401);
+        assertThat(auth.lastCodeBody.get()).as("not even asked").isNull();
+    }
+
+    @Test
+    void theCodeStepStillNeedsACsrfToken() throws Exception {
+        auth.twoStep.set(true);
+        browser.signIn();
+
+        HttpResponse<String> refused = browser.send(browser.request("/api/auth/login/code")
+                .header("Content-Type", "application/json").POST(BodyPublishers.ofString("{\"code\": \"123456\"}")));
+
+        assertThat(refused.statusCode()).isEqualTo(403);
+        assertThat(auth.lastCodeBody.get()).isNull();
+    }
+
     private static final class Browser {
 
         private final int port;
@@ -513,6 +574,9 @@ class GatewayTest {
         final AtomicReference<String> lastSignInBody = new AtomicReference<>();
         final AtomicReference<Boolean> signInsLimited = new AtomicReference<>(false);
         final AtomicReference<Boolean> hangUp = new AtomicReference<>(false);
+        static final String CODE_ID = "5f0c7a52-3d3e-4c1e-9a55-0d6f8c2b9e11";
+        final AtomicReference<Boolean> twoStep = new AtomicReference<>(false);
+        final AtomicReference<String> lastCodeBody = new AtomicReference<>();
         private volatile int status = 200;
         private volatile String body = "{}";
         private final int port;
@@ -542,6 +606,8 @@ class GatewayTest {
             passwordChecks.set(0);
             signInsLimited.set(false);
             hangUp.set(false);
+            twoStep.set(false);
+            lastCodeBody.set(null);
             answer(200, "{}");
         }
 
@@ -580,8 +646,21 @@ class GatewayTest {
                     return;
                 }
                 boolean right = requestBody.contains("right-password");
+                if (right && twoStep.get()) {
+                    respond(exchange, 202, "{\"codeId\":\"" + CODE_ID + "\",\"sentTo\":\"a**@example.com\"}");
+                    return;
+                }
                 respond(exchange, right ? 200 : 401, right
                         ? "{\"userId\":7,\"email\":\"ada@example.com\",\"role\":\"CUSTOMER\",\"customerId\":42}" : "{}");
+                return;
+            }
+            if (exchange.getRequestURI().getPath().equals("/internal/sign-in-codes")) {
+                lastCodeBody.set(requestBody);
+                if (requestBody.contains("\"123456\"")) {
+                    respond(exchange, 200, "{\"userId\":7,\"email\":\"ada@example.com\",\"role\":\"CUSTOMER\",\"customerId\":42}");
+                } else {
+                    respond(exchange, requestBody.contains("\"999999\"") ? 410 : 401, "{}");
+                }
                 return;
             }
             lastPath.set(exchange.getRequestURI().toString());

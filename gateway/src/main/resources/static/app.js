@@ -1947,8 +1947,21 @@ function showLogin(message = null) {
   const form = $("login-form");
   form.elements.password.value = "";
   showFormError(form, message);
+  form.hidden = false;
+  $("code-form").hidden = true;
   $("login-view").hidden = false;
   form.elements.email.focus();
+}
+
+/** The password was right and a code was emailed: ask for it in place of the password form. */
+function showCodeStep(sentTo) {
+  const form = $("code-form");
+  form.reset();
+  showFormError(form, null);
+  $("code-sent-to").textContent = `We emailed a 6-digit code to ${sentTo}. It works for 10 minutes.`;
+  $("login-form").hidden = true;
+  form.hidden = false;
+  form.elements.code.focus();
 }
 
 async function showApp(user) {
@@ -1989,11 +2002,16 @@ $("login-form").onsubmit = async (event) => {
   submit.disabled = true;
   showFormError(form, null);
   try {
-    await api("/api/auth/login", {
+    const answer = await api("/api/auth/login", {
       method: "POST",
       expectSignedOut: true,
       form: { email: form.elements.email.value.trim(), password: form.elements.password.value },
     });
+    form.elements.password.value = "";
+    if (answer?.codeRequired) {
+      showCodeStep(answer.sentTo);
+      return;
+    }
     form.reset();
     await start();
   } catch (error) {
@@ -2001,6 +2019,109 @@ $("login-form").onsubmit = async (event) => {
     form.elements.password.value = "";
   } finally {
     submit.disabled = false;
+  }
+};
+
+$("code-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const code = form.elements.code.value.trim();
+  if (!/^\d{6}$/.test(code)) {
+    showFormError(form, "Enter the 6 digits from the email.");
+    return;
+  }
+  const submit = form.querySelector('[type="submit"]');
+  submit.disabled = true;
+  showFormError(form, null);
+  try {
+    await api("/api/auth/login/code", { method: "POST", expectSignedOut: true, body: { code } });
+    $("login-form").reset();
+    await start();
+  } catch (error) {
+    if (/sign in again/i.test(error.message)) {
+      showLogin(error.message);
+    } else {
+      showFormError(form, error.message);
+      form.elements.code.value = "";
+      form.elements.code.focus();
+    }
+  } finally {
+    submit.disabled = false;
+  }
+};
+
+$("code-back").onclick = () => showLogin();
+
+/* Two-step sign-in settings: off → send code → enter code → on; on → enter password → off. */
+
+let twoStep = null;
+
+async function openTwoStepDialog() {
+  const form = $("two-step-form");
+  form.reset();
+  showFormError(form, null);
+  clearFieldErrors(form);
+  try {
+    twoStep = { ...(await api("/api/auth/two-step")), codeSent: false };
+  } catch (error) {
+    toast(error.message, "error");
+    return;
+  }
+  renderTwoStepDialog();
+  $("two-step-dialog").showModal();
+}
+
+function renderTwoStepDialog() {
+  const { enabled, available, email, codeSent } = twoStep;
+  const action = $("two-step-action");
+  $("two-step-code-field").hidden = enabled || !codeSent;
+  $("two-step-password-field").hidden = !enabled;
+  action.hidden = !enabled && !available;
+  if (enabled) {
+    $("two-step-status").textContent = `On. After your password, you also enter a code we email to ${email}.`;
+    action.textContent = "Turn off";
+  } else if (!available) {
+    $("two-step-status").textContent = "Off. It can't be turned on because this bank has no email set up to send codes.";
+  } else if (codeSent) {
+    $("two-step-status").textContent = `We emailed a 6-digit code to ${email}. Enter it to turn on two-step sign-in.`;
+    action.textContent = "Turn on";
+  } else {
+    $("two-step-status").textContent = `Off. When it's on, signing in also needs a 6-digit code we email to ${email}, so a stolen password alone isn't enough. We'll send a code now to check it arrives.`;
+    action.textContent = "Send code";
+  }
+}
+
+$("two-step").onclick = openTwoStepDialog;
+
+$("two-step-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const action = $("two-step-action");
+  action.disabled = true;
+  showFormError(form, null);
+  clearFieldErrors(form);
+  try {
+    if (twoStep.enabled) {
+      twoStep = { ...(await api("/api/auth/two-step/turn-off", { method: "POST", body: { password: form.elements.password.value } })), codeSent: false };
+      form.reset();
+      toast("Two-step sign-in turned off.");
+    } else if (!twoStep.codeSent) {
+      await api("/api/auth/two-step/start", { method: "POST" });
+      twoStep.codeSent = true;
+    } else {
+      twoStep = { ...(await api("/api/auth/two-step/confirm", { method: "POST", body: { code: form.elements.code.value.trim() } })), codeSent: false };
+      form.reset();
+      toast("Two-step sign-in is on.");
+    }
+    renderTwoStepDialog();
+    if (twoStep.codeSent) form.elements.code.focus();
+  } catch (error) {
+    // A code that expired or was tried too often can't be used again: start over with a new one.
+    if (error.status === 410) twoStep.codeSent = false;
+    renderTwoStepDialog();
+    showFormError(form, error.message);
+  } finally {
+    action.disabled = false;
   }
 };
 

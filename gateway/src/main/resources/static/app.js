@@ -605,6 +605,13 @@ function entryLabel(entry) {
   return titleCase(entry.type);
 }
 
+function savingsInterestText(account) {
+  const rate = account.annualInterestRate == null ? "Earns interest"
+    : `Earns ${Number(account.annualInterestRate).toFixed(2)}% a year`;
+  const next = account.nextInterestOn ? ` Next payment on ${formatDay(account.nextInterestOn)}.` : "";
+  return `${rate}, worked out on each day's closing balance and paid on the 1st of each month for the month before.${next}`;
+}
+
 /** Customers have a daily limit on the transfers they send themselves; staff transfers have none. */
 function allowanceText({ dailyLimit, remainingToday }) {
   const remaining = moneyFormat.format(remainingToday);
@@ -667,7 +674,7 @@ function accountPanel() {
   transfer.onclick = () => submit("transfer");
 
   const rows = transactions.content.map((entry) => {
-    const isCredit = ["DEPOSIT", "TRANSFER_IN", "LOAN_PAYOUT"].includes(entry.type);
+    const isCredit = ["DEPOSIT", "TRANSFER_IN", "LOAN_PAYOUT", "INTEREST"].includes(entry.type);
     return el("tr", {},
       el("td", {}, dateFormat.format(new Date(entry.createdAt))),
       el("td", {}, el("span", { class: "txn" },
@@ -687,6 +694,7 @@ function accountPanel() {
     el("div", { class: `balance-card balance-${account.type.toLowerCase()}` },
       el("p", { class: "balance-label" }, "Balance"),
       el("p", { class: "balance money" }, moneyFormat.format(account.balance))),
+    account.type === "SAVINGS" ? el("p", { class: "muted" }, savingsInterestText(account)) : null,
     isStaff()
       ? el("form", {
           class: "money-form",

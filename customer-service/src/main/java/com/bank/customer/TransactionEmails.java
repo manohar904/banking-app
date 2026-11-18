@@ -96,6 +96,7 @@ public class TransactionEmails {
         return switch (eventType) {
             case "MONEY_DEPOSITED" -> "Deposit of %s to your account ending %s";
             case "MONEY_WITHDRAWN" -> "Withdrawal of %s from your account ending %s";
+            case "INTEREST_PAID" -> "Interest of %s paid into your account ending %s";
             case "TRANSFER_SENT" -> "Transfer of %s from your account ending %s";
             case "TRANSFER_RECEIVED" -> "Transfer of %s to your account ending %s";
             case "LOAN_PAID_OUT" -> "Loan of %s paid into your account ending %s";

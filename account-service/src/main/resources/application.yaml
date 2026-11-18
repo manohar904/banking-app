@@ -82,3 +82,10 @@ bank:
     # A payment that cannot be sent (not enough money, over the daily limit) is tried every hour for
     # this many days after its day, then that month is skipped.
     give-up-after-days: 3
+  savings:
+    # Percent a year on savings accounts, worked out on each day's closing balance and paid on the
+    # first of each month for the month before. Changing it applies from the next payment.
+    annual-interest-rate: ${SAVINGS_ANNUAL_INTEREST_RATE:3.00}
+    # Checked every hour, at 45 minutes past.
+    enabled: true
+    cron: "0 45 * * * *"

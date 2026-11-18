@@ -270,6 +270,19 @@ Only the account's owner and staff can download a statement. The customer's name
 only their last four digits. The PDFs are made when asked for (OpenPDF, built-in fonts only) and are
 not stored.
 
+### Savings interest
+
+Savings accounts earn interest at `SAVINGS_ANNUAL_INTEREST_RATE` percent a year (3.00 by default). It is
+worked out on each day's closing balance (balance x rate / 365 per day, from the day the account was
+opened) and paid into the account on the first of each month for the month before, as an `INTEREST`
+entry. Part-cents are dropped, and a month that earns less than a cent pays nothing. Days start at
+midnight in `TRANSFER_LIMIT_TIMEZONE`. Changing the rate applies from the next payment.
+
+A job checks every hour (at 45 past). A new savings account gets its first payment day the first time the
+job sees it; existing ones were given the first of next month when this was added. If the service was down
+over the first of a month, the missing months are paid one per run. Each payment sends a transaction
+email, and the account page shows the rate and the next payment day. Checking accounts earn nothing.
+
 ### Scheduled payments
 
 A customer (or staff, for them) can set up a monthly payment from one of their accounts to any account

@@ -7,5 +7,7 @@ public enum TransactionType {
     TRANSFER_IN,
     LOAN_PAYOUT,
     LOAN_REPAYMENT,
-    CARD_PAYMENT
+    CARD_PAYMENT,
+    /** Interest paid on a savings account. */
+    INTEREST
 }

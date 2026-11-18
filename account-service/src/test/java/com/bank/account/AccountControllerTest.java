@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
+import com.bank.account.savings.SavingsInterest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -36,6 +37,9 @@ class AccountControllerTest {
 
     @MockitoBean
     private AccountStatements accountStatements;
+
+    @MockitoBean
+    private SavingsInterest savingsInterest;
 
     @ParameterizedTest
     @ValueSource(strings = {"0", "0.00", "-5.00", "1.005", "123456789012345678.00", "null"})

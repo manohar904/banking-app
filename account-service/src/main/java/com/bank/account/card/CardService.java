@@ -3,12 +3,15 @@ package com.bank.account.card;
 import com.bank.account.Account;
 import com.bank.account.AccountRepository;
 import com.bank.account.AccountTransaction;
+import com.bank.account.AccountStatements;
 import com.bank.account.AccountTransactionRepository;
 import com.bank.account.CustomerServiceClient;
 import com.bank.account.RetiredCustomers;
 import com.bank.account.card.CardDtos.CardResponse;
 import com.bank.account.card.CardDtos.CardStatementResponse;
 import com.bank.account.card.CardDtos.CardTransactionResponse;
+import com.bank.account.statement.StatementPdf;
+import com.bank.account.statement.StatementPdf.Column;
 import com.bank.common.ConflictException;
 import com.bank.common.ResourceNotFoundException;
 import com.bank.common.events.DomainEvents;
@@ -229,6 +232,68 @@ public class CardService {
                     .map(CardStatement::getCreatedAt).orElse(now);
             return CardStatementResponse.from(statement, cardLedger.paidBetween(id, statement.getCreatedAt(), until));
         });
+    }
+
+    /**
+     * One statement as a PDF, with every purchase, payment and interest charge since the statement
+     * before it. Those entries add up from the previous balance to this one.
+     */
+    @Transactional(readOnly = true)
+    public AccountStatements.File statementPdf(Authentication caller, Long id, Long statementId) {
+        Card card = find(caller, id);
+        CardStatement statement = statements.findById(statementId)
+                .filter(found -> found.getCardId().equals(id))
+                .orElseThrow(() -> new ResourceNotFoundException("Statement " + statementId + " not found."));
+        Optional<CardStatement> previous = statements.findFirstByCardIdAndIdLessThanOrderByIdDesc(id, statementId);
+        Instant after = previous.map(CardStatement::getCreatedAt).orElse(Instant.EPOCH);
+        BigDecimal previousBalance = previous.map(CardStatement::getBalance).orElse(BigDecimal.ZERO.setScale(2));
+        List<CardTransaction> entries = cardLedger.findBetween(id, after, statement.getCreatedAt());
+        Map<Long, String> numbers = accounts.findAllById(entries.stream().map(CardTransaction::getAccountId)
+                        .filter(accountId -> accountId != null).toList()).stream()
+                .collect(Collectors.toMap(Account::getId, Account::getAccountNumber));
+
+        BigDecimal purchases = BigDecimal.ZERO.setScale(2);
+        BigDecimal payments = BigDecimal.ZERO.setScale(2);
+        StatementPdf pdf = new StatementPdf("Credit card statement");
+        customerService.nameOf(card.getCustomerId()).ifPresent(name -> pdf.detail("Name", name));
+        pdf.detail("Card", "**** **** **** " + card.getLastFour())
+                .detail("Period", StatementPdf.day(statement.getPeriodStart()) + " to "
+                        + StatementPdf.day(statement.getPeriodEnd()))
+                .detail("Credit limit", StatementPdf.money(card.getCreditLimit()))
+                .table("Transactions", "No purchases or payments in this period.",
+                        new Column("Date", 1.2f, false), new Column("Description", 3.4f, false),
+                        new Column("Charged", 1.3f, true), new Column("Paid", 1.3f, true),
+                        new Column("Owed", 1.3f, true));
+        for (CardTransaction entry : entries) {
+            boolean isPayment = entry.getType() == CardTransaction.Type.PAYMENT;
+            if (isPayment) {
+                payments = payments.add(entry.getAmount());
+            } else if (entry.getType() == CardTransaction.Type.PURCHASE) {
+                purchases = purchases.add(entry.getAmount());
+            }
+            String what = switch (entry.getType()) {
+                case PURCHASE -> entry.getMerchant();
+                case PAYMENT -> entry.getAccountId() != null && numbers.containsKey(entry.getAccountId())
+                        ? "Payment from account " + StatementPdf.ending(numbers.get(entry.getAccountId()))
+                        : "Payment";
+                case INTEREST -> "Interest";
+            };
+            pdf.row(StatementPdf.day(LocalDate.ofInstant(entry.getCreatedAt(), clock.getZone())), what,
+                    isPayment ? "" : StatementPdf.money(entry.getAmount()),
+                    isPayment ? StatementPdf.money(entry.getAmount()) : "",
+                    StatementPdf.money(entry.getOwedAfter()));
+        }
+        pdf.summary("Owed at the last statement", StatementPdf.money(previousBalance))
+                .summary("Purchases", StatementPdf.money(purchases))
+                .summary("Interest", StatementPdf.money(statement.getInterest()))
+                .summary("Payments", StatementPdf.money(payments))
+                .summary("Owed now", StatementPdf.money(statement.getBalance()))
+                .summary("Minimum payment", StatementPdf.money(statement.getMinimumPayment())
+                        + ", due by " + StatementPdf.day(statement.getDueOn()))
+                .footnote("Pay the whole amount owed by the due date and no interest is added. "
+                        + "If anything here looks wrong, please contact the bank through Help.");
+        return new AccountStatements.File("card-" + card.getLastFour() + "-statement-" + statement.getPeriodEnd()
+                + ".pdf", pdf.toBytes());
     }
 
     public List<Long> cardIdsWithStatementDue() {

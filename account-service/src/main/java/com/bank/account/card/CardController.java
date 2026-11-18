@@ -1,6 +1,9 @@
 package com.bank.account.card;
 
+import com.bank.account.AccountController;
+import com.bank.account.AccountStatements;
 import com.bank.account.card.CardDtos.CardResponse;
+import com.bank.account.statement.StatementPdf;
 import com.bank.account.card.CardDtos.CardStatementResponse;
 import com.bank.account.card.CardDtos.CardTransactionResponse;
 import com.bank.account.card.CardDtos.IssueCard;
@@ -70,6 +73,14 @@ public class CardController {
     @PostMapping("/{id}/purchases")
     public CardResponse purchase(@PathVariable Long id, @Valid @RequestBody Purchase purchase) {
         return cards.purchase(id, purchase.amount(), purchase.merchant());
+    }
+
+    /** One statement as a PDF, to save. */
+    @GetMapping(value = "/{id}/statements/{statementId}/pdf", produces = StatementPdf.CONTENT_TYPE)
+    public ResponseEntity<byte[]> statementPdf(Authentication caller, @PathVariable Long id,
+            @PathVariable Long statementId) {
+        AccountStatements.File file = cards.statementPdf(caller, id, statementId);
+        return AccountController.asDownload(file.name(), file.content());
     }
 
     @PostMapping("/{id}/payments")

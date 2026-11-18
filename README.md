@@ -252,6 +252,24 @@ in `account-service`: `POST` issues (staff); `GET` lists a customer's cards (`cu
 `/{id}/payments`, `/{id}/freeze` and `/{id}/unfreeze` for both. The audit log and events name cards
 `card-<id>`, and keep shop names out.
 
+### Downloadable statements
+
+Customers (and staff) can download statements as PDF files from the app:
+
+- **Accounts:** on an account's page, pick a month and press **Download PDF**. The statement shows the
+  balance at the start of the month, every entry in it, money in and out, and the balance at the end (or
+  now, for the month still going). Months start at midnight in `TRANSFER_LIMIT_TIMEZONE`. Only months the
+  account was open can be picked. API: `GET /api/accounts/{id}/statement?month=YYYY-MM` (no `month` means
+  this one).
+- **Credit cards:** each statement in a card's list has a **PDF** button. The PDF lists every purchase,
+  payment and interest charge since the statement before, adding up from what was owed then to what is
+  owed now, with the minimum payment and due date. API: `GET /api/cards/{id}/statements/{statementId}/pdf`.
+
+Only the account's owner and staff can download a statement. The customer's name comes from
+`customer-service`; if it can't be reached the statement is still made, without the name. Cards show
+only their last four digits. The PDFs are made when asked for (OpenPDF, built-in fonts only) and are
+not stored.
+
 ### Help
 
 Everyone has a **Help** button. Customers see answers to common questions and can ask the bank their

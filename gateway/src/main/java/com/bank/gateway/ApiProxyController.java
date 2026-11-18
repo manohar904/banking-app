@@ -42,7 +42,9 @@ public class ApiProxyController {
             List.of(HttpHeaders.ACCEPT, HttpHeaders.ACCEPT_LANGUAGE, HttpHeaders.CONTENT_TYPE,
                     IdempotencyFilter.KEY_HEADER);
     private static final List<String> RESPONSE_HEADERS =
-            List.of(HttpHeaders.CONTENT_TYPE, HttpHeaders.LOCATION, IdempotencyFilter.REPLAYED_HEADER);
+            List.of(HttpHeaders.CONTENT_TYPE, HttpHeaders.LOCATION, IdempotencyFilter.REPLAYED_HEADER,
+                    // The file name a downloaded statement is saved under.
+                    HttpHeaders.CONTENT_DISPOSITION);
 
     private static final Pattern CUSTOMER_LOGIN = Pattern.compile("/api/customers/[^/]+/login");
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);

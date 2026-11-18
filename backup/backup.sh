@@ -5,6 +5,9 @@
 #   docker compose exec backup sh /backup.sh now             take a backup now
 #   docker compose exec backup sh /backup.sh list            show the backups
 #   docker compose exec backup sh /backup.sh verify [NAME]   test-restore one (the newest by default)
+#   docker compose exec backup sh /backup.sh offsite [NAME]  copy one off this computer now (newest by default)
+#   docker compose exec backup sh /backup.sh offsite-list    show the copies kept off this computer
+#   docker compose exec backup sh /backup.sh fetch FILE      bring a copy back from there into the backups
 #   sh scripts/restore-backup.sh NAME                        put one back (stops the bank meanwhile)
 set -eu
 export PGOPTIONS="-c client_min_messages=warning"
@@ -14,6 +17,11 @@ keep="${BACKUP_KEEP:-7}"
 at="${BACKUP_TIME:-02:00}"
 metrics=/tmp/metrics.prom
 check_db=bank_restore_check
+# Encrypted copies of each backup go here, if it is set: a folder off this computer's disk, such as
+# OneDrive. Nothing is ever written there unencrypted.
+offsite=/offsite
+offsite_keep="${BACKUP_OFFSITE_KEEP:-30}"
+export GNUPGHOME=/tmp/gnupg
 retry_seconds=1800
 
 log() { echo "$(date '+%F %T %Z') $*"; }
@@ -102,6 +110,86 @@ backup_now() {
 
   verify "$name"
   prune
+  if offsite_enabled; then
+    # In its own process: a failed copy must not count the backup itself as failed.
+    (offsite_copy "$name") || log "ERROR: the copy off this computer failed; the backup itself is fine."
+  fi
+}
+
+offsite_enabled() {
+  [ -n "${BACKUP_OFFSITE_DIR:-}" ] || return 1
+  [ -n "${BACKUP_ENCRYPTION_PASSWORD:-}" ] || { log "BACKUP_OFFSITE_DIR is set but BACKUP_ENCRYPTION_PASSWORD is not, so nothing is copied off this computer."; return 1; }
+  return 0
+}
+
+# GnuPG reads the password on its own input, file descriptor 3, so it never appears in a command line
+# and standard input stays free for the data being encrypted.
+encrypt() {
+  gpg --batch --quiet --yes --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 "$@" 3<<EOF
+$BACKUP_ENCRYPTION_PASSWORD
+EOF
+}
+decrypt() {
+  gpg --batch --quiet --yes --pinentry-mode loopback --passphrase-fd 3 --decrypt "$@" 3<<EOF
+$BACKUP_ENCRYPTION_PASSWORD
+EOF
+}
+
+# Packs a verified backup into one encrypted file in $offsite, then decrypts that file again and checks
+# every dump against its checksum, so a copy that can't be read back is never counted as made.
+offsite_copy() {
+  name="${1:-$(verified_backups | tail -n 1)}"
+  [ -n "$name" ] && [ -f "$dir/$name/VERIFIED" ] || die "No verified backup called '${name}'."
+  mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME"
+  out="$offsite/bank-backup-$name.tar.gpg"
+  check=/tmp/offsite-check
+  rm -rf "$check" "$out.part"
+  trap 'rm -rf "$check" "$out.part"' EXIT
+  tar -C "$dir" -cf - "$name" | encrypt -o "$out.part" || die "$name: could not write the encrypted copy to $offsite"
+  mkdir -p "$check"
+  decrypt "$out.part" | tar -C "$check" -xf - || die "$name: the encrypted copy could not be read back"
+  (cd "$check/$name" && sha256sum -c -s SHA256SUMS) || die "$name: the encrypted copy does not match the backup"
+  mv "$out.part" "$out"
+  rm -rf "$check"
+  trap - EXIT
+  date +%s > "$dir/.offsite_last_success"
+  log "$name: encrypted copy written off this computer as $(basename "$out"), $(du -h "$out" | cut -f1), and read back"
+  offsite_prune
+}
+
+offsite_copies() {
+  ls -1 "$offsite" 2>/dev/null | grep -E '^bank-backup-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}[.]tar[.]gpg$' || true
+}
+
+offsite_prune() {
+  count=$(offsite_copies | wc -l)
+  [ "$count" -gt "$offsite_keep" ] || return 0
+  offsite_copies | head -n $((count - offsite_keep)) | while read -r old; do
+    rm -f "${offsite:?}/$old"
+    log "Removed old copy $old from off this computer"
+  done
+}
+
+# Brings an encrypted copy back into the backups folder, for example on a new computer after the old
+# one was lost. Then it can be test-restored with verify, or put back with scripts/restore-backup.sh.
+fetch() {
+  file="${1:-}"
+  [ -n "$file" ] || die "Say which copy to bring back. See: sh /backup.sh offsite-list"
+  case "$file" in /*) ;; *) file="$offsite/$file" ;; esac
+  [ -f "$file" ] || die "No copy at $file"
+  [ -n "${BACKUP_ENCRYPTION_PASSWORD:-}" ] || die "BACKUP_ENCRYPTION_PASSWORD is not set, so the copy can't be opened."
+  mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME"
+  name=$(basename "$file" .tar.gpg); name=${name#bank-backup-}
+  [ ! -e "$dir/$name" ] || die "$name is already in the backups folder."
+  tmp="$dir/.incomplete-$name"
+  rm -rf "$tmp"; mkdir -p "$tmp"
+  trap 'rm -rf "$tmp"' EXIT
+  decrypt "$file" | tar -C "$tmp" -xf - || die "Could not open $file. Is BACKUP_ENCRYPTION_PASSWORD the one it was made with?"
+  [ -f "$tmp/$name/SHA256SUMS" ] || die "$file does not hold a backup called $name"
+  mv "$tmp/$name" "$dir/$name"
+  rm -rf "$tmp"
+  trap - EXIT
+  log "Brought back $name. Test it with: sh /backup.sh verify $name"
 }
 
 # Puts a backup back. Every database is first restored under a temporary name; only when all of them
@@ -170,6 +258,12 @@ bank_backup_last_run_success $(cat /tmp/last_run_success 2>/dev/null || echo 1)
 # HELP bank_backup_size_bytes Size of the newest verified backup.
 # TYPE bank_backup_size_bytes gauge
 bank_backup_size_bytes $size
+# HELP bank_backup_offsite_enabled Whether encrypted copies are kept off this computer.
+# TYPE bank_backup_offsite_enabled gauge
+bank_backup_offsite_enabled $(offsite_enabled >/dev/null 2>&1 && echo 1 || echo 0)
+# HELP bank_backup_offsite_last_success_timestamp_seconds When the newest copy off this computer was written and read back (0 if none).
+# TYPE bank_backup_offsite_last_success_timestamp_seconds gauge
+bank_backup_offsite_last_success_timestamp_seconds $(cat "$dir/.offsite_last_success" 2>/dev/null || echo 0)
 # HELP bank_backup_count Verified backups kept.
 # TYPE bank_backup_count gauge
 bank_backup_count $(verified_backups | wc -l)
@@ -196,6 +290,14 @@ schedule() {
   nc -lk -p 9188 -e sh /backup.sh http &
   trap 'kill $! 2>/dev/null; exit 0' TERM INT
   log "Backing up daily at $at ($(date +%Z)) into $dir, keeping $keep verified backups."
+  if offsite_enabled; then
+    log "Encrypted copies go to $BACKUP_OFFSITE_DIR, keeping $offsite_keep."
+    # The newest backup may have been made before copies were turned on.
+    newest=$(verified_backups | tail -n 1)
+    if [ -n "$newest" ] && [ ! -f "$offsite/bank-backup-$newest.tar.gpg" ]; then
+      sh /backup.sh offsite "$newest" || log "ERROR: could not copy $newest off this computer."
+    fi
+  fi
   at_hm=$(echo "$at" | tr -d :)
   last_try=0
 
@@ -228,6 +330,9 @@ case "${1:-}" in
   verify) shift; verify "${1:-}" ;;
   restore) shift; restore "$@" ;;
   list) list ;;
+  offsite) shift; offsite_enabled || die "Copies off this computer are not set up. See README.md, \"Backups\"."; offsite_copy "${1:-}" ;;
+  offsite-list) offsite_copies ;;
+  fetch) shift; fetch "${1:-}" ;;
   http) http ;;
   *) sed -n '2,8p' "$0"; exit 2 ;;
 esac

@@ -534,6 +534,30 @@ backup was taken are not undone.
 The alerts `BackupFailed` and `BackupTooOld` (no good backup for 30 hours) tell you when backups stop
 working.
 
+### Copies off this computer
+
+The `backups` folder is on the same disk as everything else, so a dead disk or a lost laptop would take
+the backups with it. With `BACKUP_OFFSITE_DIR` (for example a folder inside OneDrive, which uploads it)
+and `BACKUP_ENCRYPTION_PASSWORD` set in `.env`, every verified backup is also packed into one file,
+encrypted with AES-256 (GnuPG), and written there as `bank-backup-<name>.tar.gpg`. The copy is then
+decrypted again and every dump checked against its checksum; only a copy that reads back counts. The
+newest `BACKUP_OFFSITE_KEEP` (30) are kept. Nothing is ever written there unencrypted, and the password
+is passed to GnuPG on standard input, never on a command line.
+
+**Keep the password somewhere other than this computer too**, such as a password manager: if the
+computer is lost, the copies can't be opened without it. A failed copy doesn't fail the backup itself;
+the alert `BackupOffsiteCopyTooOld` fires when no copy has worked for 36 hours.
+
+```
+docker compose exec backup sh /backup.sh offsite           # copy the newest backup off this computer now
+docker compose exec backup sh /backup.sh offsite-list      # the copies kept there
+docker compose exec backup sh /backup.sh fetch bank-backup-2026-11-18_020000.tar.gpg   # bring one back
+```
+
+To recover on a new computer: set up the project and `.env` (with the same `BACKUP_ENCRYPTION_PASSWORD`
+and `BACKUP_OFFSITE_DIR` pointing at the synced folder), start the stack, `fetch` the newest copy, then
+`verify` it and put it back with `scripts/restore-backup.sh`.
+
 ## Before production
 
 This is set up for local development. Before real use:

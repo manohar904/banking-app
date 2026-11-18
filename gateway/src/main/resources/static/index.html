@@ -145,6 +145,26 @@
     </form>
   </dialog>
 
+  <dialog id="payee-dialog">
+    <form id="payee-form" method="dialog" novalidate>
+      <h2>Add a payee</h2>
+      <p class="muted">Save an account you pay often under a name, then pick it by name when you transfer or set up a monthly payment.</p>
+      <p class="form-error" data-form-error hidden></p>
+      <label>Name
+        <input name="name" maxlength="40" autocomplete="off" placeholder="For example, Landlord" required>
+        <span class="field-error" data-error-for="name"></span>
+      </label>
+      <label>Account number
+        <input name="accountNumber" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="12 digits" required>
+        <span class="field-error" data-error-for="accountNumber"></span>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Save payee</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="scheduled-dialog">
     <form id="scheduled-form" method="dialog" novalidate>
       <h2>Set up a monthly payment</h2>
@@ -154,6 +174,7 @@
         <select name="fromAccountId"></select>
         <span class="field-error" data-error-for="fromAccountId"></span>
       </label>
+      <div id="scheduled-payee"></div>
       <label>To account number
         <input name="toAccountNumber" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="12 digits" required>
         <span class="field-error" data-error-for="toAccountNumber"></span>

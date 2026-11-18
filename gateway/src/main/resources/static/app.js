@@ -28,6 +28,7 @@ function resetState() {
     help: null,
     loans: [],
     scheduled: [],
+    payees: [],
     loan: null,
     cards: [],
     card: null,
@@ -268,12 +269,13 @@ async function selectCustomer(id) {
   state.loanBoard = null;
   const version = ++selectionVersion;
   try {
-    const [customer, accounts, loans, cards, scheduled] = await Promise.all([
+    const [customer, accounts, loans, cards, scheduled, payees] = await Promise.all([
       api(`/api/customers/${id}`),
       fetchAllAccounts(id),
       fetchLoans(id),
       fetchCards(id),
       fetchScheduled(id),
+      fetchPayees(id),
     ]);
     if (version !== selectionVersion) return;
     state.customer = customer;
@@ -281,6 +283,7 @@ async function selectCustomer(id) {
     state.loans = loans;
     state.cards = cards;
     state.scheduled = scheduled;
+    state.payees = payees;
     state.account = null;
     state.loan = null;
     state.card = null;
@@ -546,6 +549,7 @@ function customerPanel() {
       : el("p", { class: "empty" }, "This customer has no accounts yet."),
     ...cardsSection(),
     ...scheduledSection(),
+    ...payeesSection(),
     ...loansSection());
 }
 
@@ -700,12 +704,14 @@ function accountPanel() {
           class: "money-form",
           novalidate: "",
           onsubmit: (event) => { event.preventDefault(); submit("deposit"); },
-        }, el("label", {}, "Amount", amount), deposit, withdraw, el("label", {}, "To account", toAccount), transfer)
+        }, el("label", {}, "Amount", amount), deposit, withdraw, payeePicker(toAccount, account.accountNumber),
+          el("label", {}, "To account", toAccount), transfer)
       : el("form", {
           class: "money-form",
           novalidate: "",
           onsubmit: (event) => { event.preventDefault(); submit("transfer"); },
-        }, el("label", {}, "To account", toAccount), el("label", {}, "Amount", amount), transfer),
+        }, payeePicker(toAccount, account.accountNumber), el("label", {}, "To account", toAccount),
+          el("label", {}, "Amount", amount), transfer),
     amountError,
     allowance ? el("p", { class: "muted allowance" }, allowanceText(allowance)) : null,
     accountStatementForm(account),
@@ -1397,6 +1403,84 @@ function closeCard() {
   renderDetail();
 }
 
+/* ---------- Saved payees ---------- */
+
+async function fetchPayees(customerId) {
+  try {
+    return await api(`/api/payees?customerId=${customerId}`);
+  } catch {
+    // The rest of the customer's page still works without them.
+    return [];
+  }
+}
+
+async function refreshPayees() {
+  state.payees = await fetchPayees(state.customer.id);
+  renderCustomers();
+  renderDetail();
+}
+
+/**
+ * A list of the customer's saved payees that fills in the account number field, or nothing when there
+ * are none. The account being paid from is left out.
+ */
+function payeePicker(numberInput, excludeNumber = null) {
+  const choices = state.payees.filter((payee) => payee.accountNumber !== excludeNumber);
+  if (!choices.length) return null;
+  const select = el("select", { "aria-label": "Saved payee" },
+    el("option", { value: "" }, "Type a number…"),
+    ...choices.map((payee) => el("option", { value: payee.accountNumber }, `${payee.name} (${payee.accountNumber})`)));
+  select.onchange = () => {
+    if (select.value) numberInput.value = select.value;
+  };
+  numberInput.addEventListener("input", () => {
+    if (numberInput.value !== select.value) select.value = "";
+  });
+  return el("label", {}, "Payee", select);
+}
+
+function payeeNameOf(accountNumber) {
+  return state.payees.find((payee) => payee.accountNumber === accountNumber)?.name;
+}
+
+function payeesSection() {
+  const rows = state.payees.map((payee) => el("tr", {},
+    el("td", {}, payee.name),
+    el("td", { class: "number" }, payee.accountNumber),
+    el("td", { class: "right" }, el("button", { type: "button", onclick: () => confirmRemovePayee(payee) }, "Remove"))));
+  return [
+    el("div", { class: "panel-head spaced-top" },
+      el("h3", {}, "Saved payees"),
+      el("button", { type: "button", onclick: openPayeeDialog }, "Add payee")),
+    rows.length
+      ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {},
+            el("th", { scope: "col" }, "Name"),
+            el("th", { scope: "col" }, "Account number"),
+            el("th", { scope: "col", class: "right" }, ""))),
+          el("tbody", {}, ...rows)))
+      : el("p", { class: "empty" }, "No saved payees. Save the accounts you pay often, then pick them by name when you transfer."),
+  ];
+}
+
+function openPayeeDialog() {
+  const form = $("payee-form");
+  form.reset();
+  showFormError(form, null);
+  clearFieldErrors(form);
+  $("payee-dialog").showModal();
+}
+
+function confirmRemovePayee(payee) {
+  openConfirm("Remove this payee?",
+    `${payee.name} (${payee.accountNumber}) will be removed from the saved payees. Scheduled payments to this account are not changed.`,
+    async () => {
+      await api(`/api/payees/${payee.id}`, { method: "DELETE" });
+      toast("Payee removed.");
+      await refreshPayees();
+    }, "Remove");
+}
+
 /* ---------- Scheduled payments ---------- */
 
 async function fetchScheduled(customerId) {
@@ -1418,7 +1502,9 @@ const ordinal = (day) => `${day}${[11, 12, 13].includes(day) ? "th" : ({ 1: "st"
 function scheduledSection() {
   const active = state.scheduled.filter((payment) => payment.status === "ACTIVE");
   const rows = active.map((payment) => el("tr", {},
-    el("td", {}, el("span", { class: "number" }, payment.toAccountNumber),
+    el("td", {}, payeeNameOf(payment.toAccountNumber)
+        ? el("span", {}, `${payeeNameOf(payment.toAccountNumber)} `, el("small", { class: "number muted" }, payment.toAccountNumber))
+        : el("span", { class: "number" }, payment.toAccountNumber),
       el("small", { class: "muted block" }, payment.reference ?? `from ${payment.fromAccountNumber ?? "an account"}`)),
     el("td", { class: "right number" }, moneyFormat.format(payment.amount)),
     el("td", {}, `${ordinal(payment.dayOfMonth)} of each month`,
@@ -1454,6 +1540,8 @@ function openScheduledDialog() {
   clearFieldErrors(form);
   form.elements.fromAccountId.replaceChildren(...state.accounts.map((account) =>
     el("option", { value: account.id }, `${titleCase(account.type)} ${account.accountNumber} (${moneyFormat.format(account.balance)})`)));
+  const picker = payeePicker(form.elements.toAccountNumber);
+  $("scheduled-payee").replaceChildren(...(picker ? [picker] : []));
   $("scheduled-dialog-message").textContent =
     "Sent every month on the day you choose, counting towards the daily transfer limit. If there isn't enough money it is tried again for three days, then that month is skipped.";
   $("scheduled-dialog").showModal();
@@ -2059,6 +2147,23 @@ $("scheduled-form").onsubmit = (event) => {
     });
     toast("Monthly payment set up.");
     await refreshScheduled();
+  });
+};
+
+$("payee-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  submitDialog($("payee-dialog"), form, async () => {
+    await api("/api/payees", {
+      method: "POST",
+      body: {
+        customerId: state.customer.id,
+        name: form.elements.name.value.trim(),
+        accountNumber: form.elements.accountNumber.value.trim(),
+      },
+    });
+    toast("Payee saved.");
+    await refreshPayees();
   });
 };
 

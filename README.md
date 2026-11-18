@@ -301,6 +301,18 @@ A customer can have 10 active payments. An account with an active one can't be d
 cancelled. The API is `/api/scheduled-payments` in `account-service`: `GET` lists (`customerId=` for staff),
 `POST` sets one up, `POST /{id}/cancel` cancels. The audit log names them `scheduled-<id>`.
 
+### Saved payees
+
+A customer (or staff, for them) can save accounts they pay often under a name, such as "Landlord", under
+**Saved payees** on the customer's page. The transfer form and the monthly payment dialog then offer a
+**Payee** list that fills in the account number, and scheduled payments show the payee's name. The
+account number must belong to an account when it is saved, which catches a mistyped number. Names are
+unique per customer (ignoring case), as are account numbers; a customer can have 50.
+
+Removing a payee doesn't change scheduled payments to that account. The API is `/api/payees` in
+`account-service`: `GET` lists (`customerId=` for staff), `POST` saves (`customerId` in the body for staff),
+`DELETE /{id}` removes. The audit log names them `payee-<id>` and keeps the names out.
+
 ### Help
 
 Everyone has a **Help** button. Customers see answers to common questions and can ask the bank their

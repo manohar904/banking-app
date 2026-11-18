@@ -12,6 +12,7 @@ import com.bank.common.security.Callers;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.time.YearMonth;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -112,6 +113,14 @@ public class AccountController {
             @PathVariable Long id,
             @PageableDefault(sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
         return new PagedModel<>(accountService.listTransactions(id, pageable));
+    }
+
+    /** Money in and out for each of the last months (12 unless months= says otherwise), oldest first. */
+    @PreAuthorize("@access.canViewAccount(authentication, #id)")
+    @GetMapping("/{id}/summary")
+    public List<AccountStatements.MonthSummary> summary(@PathVariable Long id,
+            @RequestParam(defaultValue = "12") int months) {
+        return accountStatements.summary(id, months);
     }
 
     /** One month's statement as a PDF, this month unless month=YYYY-MM says otherwise. */

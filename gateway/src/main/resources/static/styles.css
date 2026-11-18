@@ -28,6 +28,9 @@
   --card-credit: linear-gradient(125deg, #1e1b4b 0%, #334155 55%, #0f766e 100%);
   --shadow: 0 1px 2px rgb(30 27 58 / 6%), 0 8px 24px rgb(30 27 58 / 7%);
   --shadow-strong: 0 12px 32px rgb(67 56 202 / 28%);
+  /* Chart series: checked for colour-blind separation and contrast on --surface. */
+  --series-in: #2a78d6;
+  --series-out: #eb6834;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -55,6 +58,8 @@
     --violet-soft: #33265c;
     --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 28%);
     --shadow-strong: 0 12px 32px rgb(0 0 0 / 40%);
+    --series-in: #3987e5;
+    --series-out: #d95926;
   }
 }
 
@@ -600,3 +605,26 @@ textarea { resize: vertical; min-height: 96px; }
 
 /* A second line under a figure in a table cell, such as interest included in a statement. */
 .block { display: block; }
+
+/* Money in and out chart (account page) */
+.chart { position: relative; margin-top: 8px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 4px 0 0; color: var(--muted); font-size: 0.875rem; }
+.chart-key { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+.chart-swatch { width: 10px; height: 10px; border-radius: 2px; }
+.swatch-in, .bar-in { fill: var(--series-in); background: var(--series-in); }
+.swatch-out, .bar-out { fill: var(--series-out); background: var(--series-out); }
+.chart-grid { stroke: var(--border); stroke-width: 1; }
+.chart-axis-text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-hit { fill: transparent; cursor: default; }
+.chart-hover { fill: var(--accent-soft); opacity: 0.6; }
+.chart-tooltip {
+  position: absolute; z-index: 2; pointer-events: none; min-width: 170px;
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow); font-size: 0.8125rem;
+}
+.chart-tooltip strong { display: block; margin-bottom: 4px; }
+.chart-tooltip .chart-row { display: flex; justify-content: space-between; gap: 12px; }
+.chart-tooltip .chart-row span:first-child { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.chart-table { margin-top: 8px; }
+.chart-table summary { cursor: pointer; color: var(--muted); font-size: 0.875rem; }

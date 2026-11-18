@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.bank.account.CustomerServiceClient;
@@ -110,6 +111,39 @@ class StatementsIntegrationTest {
         String text = pdfText(mockMvc.perform(asStaff(get("/api/accounts/{id}/statement", account)))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray());
         assertThat(text).contains(squashed("No money moved in or out", "Balance now 0.00")).doesNotContain("Name");
+    }
+
+    @Test
+    void theSummaryTotalsEachMonthFromWhenTheAccountWasOpened() throws Exception {
+        long customer = newCustomerId();
+        long account = createAccount(customer);
+        long other = createAccount(newCustomerId());
+        YearMonth thisMonth = YearMonth.now(ZoneOffset.UTC);
+        deposit(account, "500.00");
+        moveToLastMonth(account);
+        withdraw(account, "120.00");
+        transfer(account, numberOf(other), "30.00");
+        deposit(account, "45.50");
+
+        mockMvc.perform(asCustomer(customer, get("/api/accounts/{id}/summary", account)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2)) // opened last month
+                .andExpect(jsonPath("$[0].month").value(thisMonth.minusMonths(1).toString()))
+                .andExpect(jsonPath("$[0].moneyIn").value(500.00))
+                .andExpect(jsonPath("$[0].moneyOut").value(0))
+                .andExpect(jsonPath("$[0].endBalance").value(500.00))
+                .andExpect(jsonPath("$[1].month").value(thisMonth.toString()))
+                .andExpect(jsonPath("$[1].moneyIn").value(45.50))
+                .andExpect(jsonPath("$[1].moneyOut").value(150.00))
+                .andExpect(jsonPath("$[1].endBalance").value(395.50));
+        mockMvc.perform(asCustomer(customer, get("/api/accounts/{id}/summary", account).param("months", "1")))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].month").value(thisMonth.toString()));
+
+        mockMvc.perform(asCustomer(customer, get("/api/accounts/{id}/summary", account).param("months", "25")))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(asCustomer(newCustomerId(), get("/api/accounts/{id}/summary", account)))
+                .andExpect(status().isForbidden());
     }
 
     @Test

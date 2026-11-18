@@ -287,6 +287,15 @@ Only the account's owner and staff can download a statement. The customer's name
 only their last four digits. The PDFs are made when asked for (OpenPDF, built-in fonts only) and are
 not stored.
 
+### Money in and out
+
+Each account's page shows a bar chart of money in and money out for each of the last 12 months (6 on a
+phone), from the month the account was opened. Hovering a month shows its totals and the balance at its
+end, and **Show as a table** lists the same figures. Interest, loans paid in and transfers received count
+as money in; withdrawals, transfers sent, loan repayments and card payments as money out. Months start at
+midnight in `TRANSFER_LIMIT_TIMEZONE`. API: `GET /api/accounts/{id}/summary?months=12` (1 to 24), oldest
+month first. The two colours were checked for colour-blind separation and contrast in light and dark mode.
+
 ### Savings interest
 
 Savings accounts earn interest at `SAVINGS_ANNUAL_INTEREST_RATE` percent a year (3.00 by default). It is

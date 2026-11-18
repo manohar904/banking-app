@@ -34,6 +34,9 @@ class AccountControllerTest {
     @MockitoBean
     private CustomerTransfers customerTransfers;
 
+    @MockitoBean
+    private AccountStatements accountStatements;
+
     @ParameterizedTest
     @ValueSource(strings = {"0", "0.00", "-5.00", "1.005", "123456789012345678.00", "null"})
     void invalidAmountsAreRejectedBeforeReachingTheService(String amount) throws Exception {

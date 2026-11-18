@@ -6,15 +6,20 @@ import com.bank.account.dto.MoneyRequest;
 import com.bank.account.dto.TransactionResponse;
 import com.bank.account.dto.TransferAllowanceResponse;
 import com.bank.account.dto.TransferRequest;
+import com.bank.account.statement.StatementPdf;
 import com.bank.common.security.Callers;
 import jakarta.validation.Valid;
 import java.net.URI;
+import java.time.YearMonth;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.data.web.PagedModel;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -35,6 +40,7 @@ public class AccountController {
 
     private final AccountService accountService;
     private final CustomerTransfers customerTransfers;
+    private final AccountStatements accountStatements;
 
     @PostMapping
     public ResponseEntity<AccountResponse> create(@Valid @RequestBody CreateAccountRequest request) {
@@ -102,6 +108,23 @@ public class AccountController {
             @PathVariable Long id,
             @PageableDefault(sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
         return new PagedModel<>(accountService.listTransactions(id, pageable));
+    }
+
+    /** One month's statement as a PDF, this month unless month=YYYY-MM says otherwise. */
+    @PreAuthorize("@access.canViewAccount(authentication, #id)")
+    @GetMapping(value = "/{id}/statement", produces = StatementPdf.CONTENT_TYPE)
+    public ResponseEntity<byte[]> statement(@PathVariable Long id, @RequestParam(required = false) YearMonth month) {
+        AccountStatements.File file = accountStatements.forMonth(id, month);
+        return asDownload(file.name(), file.content());
+    }
+
+    /** Sent as an attachment, so the browser saves it under this name rather than showing it. */
+    public static ResponseEntity<byte[]> asDownload(String name, byte[] content) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(name).build().toString())
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(content);
     }
 
     @DeleteMapping("/{id}")

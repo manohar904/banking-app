@@ -130,6 +130,38 @@ async function api(path, options = {}) {
   return data;
 }
 
+/**
+ * Fetches a file, such as a statement, and hands it to the browser to save. Errors come back as JSON,
+ * the same as from api().
+ */
+async function download(path, fallbackName) {
+  let response;
+  try {
+    response = await fetch(path, { headers: { Accept: "application/pdf, application/json" } });
+  } catch {
+    throw new ApiError("Could not reach the server. Check that it is running.", 0);
+  }
+  if (response.status === 401) {
+    showLogin("Your session has ended. Please sign in again.");
+  }
+  if (!response.ok) {
+    let detail = null;
+    try {
+      detail = (await response.json())?.detail;
+    } catch {
+      // The generic message below.
+    }
+    throw new ApiError(detail ?? `The download failed (${response.status}).`, response.status);
+  }
+  const named = /filename="?([^";]+)"?/.exec(response.headers.get("Content-Disposition") ?? "");
+  const url = URL.createObjectURL(await response.blob());
+  const link = el("a", { href: url, download: named ? named[1] : fallbackName });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 /** Builds elements with textContent, so API data can never be interpreted as HTML. */
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -664,6 +696,7 @@ function accountPanel() {
         }, el("label", {}, "To account", toAccount), el("label", {}, "Amount", amount), transfer),
     amountError,
     allowance ? el("p", { class: "muted allowance" }, allowanceText(allowance)) : null,
+    accountStatementForm(account),
     el("h3", { class: "spaced-top" }, "Transactions"),
     rows.length
       ? el("div", { class: "table-wrap" }, el("table", {},
@@ -675,6 +708,45 @@ function accountPanel() {
           el("tbody", {}, ...rows)))
       : el("p", { class: "empty" }, "No transactions yet."),
     pager(transactions.page, (next) => selectAccount(account.id, next)));
+}
+
+/** Months the account has been open, newest first, as "YYYY-MM" with a readable label. At most two years. */
+function statementMonths(openedAt) {
+  const opened = new Date(openedAt);
+  const months = [];
+  const label = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
+  for (let date = new Date(); months.length < 24; date = new Date(date.getFullYear(), date.getMonth() - 1, 1)) {
+    if (date.getFullYear() * 12 + date.getMonth() < opened.getFullYear() * 12 + opened.getMonth()) break;
+    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    months.push({ value, text: months.length === 0 ? `${label.format(date)} (so far)` : label.format(date) });
+  }
+  return months;
+}
+
+function accountStatementForm(account) {
+  const months = statementMonths(account.createdAt);
+  const month = el("select", { "aria-label": "Month" }, ...months.map((option) => el("option", { value: option.value }, option.text)));
+  const error = el("span", { class: "field-error", role: "alert" });
+  const button = el("button", { type: "submit" }, "Download PDF");
+  return el("div", {},
+    el("h3", { class: "spaced-top" }, "Statements"),
+    el("form", {
+      class: "money-form",
+      novalidate: "",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        error.textContent = "";
+        button.disabled = true;
+        try {
+          await download(`/api/accounts/${account.id}/statement?month=${month.value}`,
+            `statement-${account.accountNumber}-${month.value}.pdf`);
+        } catch (failure) {
+          error.textContent = failure.message;
+        }
+        button.disabled = false;
+      },
+    }, el("label", {}, "Month", month), button),
+    error);
 }
 
 /* ---------- Help ---------- */
@@ -1370,7 +1442,7 @@ function cardPanel() {
     isStaff() && open ? cardLimitForm(card) : null,
     el("h3", { class: "spaced-top" }, "Statements"),
     open ? el("p", { class: "muted" }, `Next statement on ${formatDay(card.nextStatementOn)}. Pay a statement in full by its due date and no interest is added.`) : null,
-    cardStatementTable(state.cardStatements),
+    cardStatementTable(card, state.cardStatements),
     el("h3", { class: "spaced-top" }, "Card activity"),
     cardTransactionTable(cardTransactions),
     pager(cardTransactions.page, (next) => selectCard(card.id, next)));
@@ -1509,7 +1581,18 @@ function statementBadge(statement, isLatest) {
     : el("span", { class: "badge badge-off" }, "Not paid");
 }
 
-function cardStatementTable(statements) {
+async function downloadCardStatement(button, card, statement) {
+  button.disabled = true;
+  try {
+    await download(`/api/cards/${card.id}/statements/${statement.id}/pdf`,
+      `card-${card.lastFour}-statement-${statement.periodEnd}.pdf`);
+  } catch (failure) {
+    toast(failure.message, "error");
+  }
+  button.disabled = false;
+}
+
+function cardStatementTable(card, statements) {
   if (!statements.length) return el("p", { class: "empty" }, "No statements yet. The first comes at the start of next month.");
   const rows = statements.map((statement, index) => el("tr", {},
     el("td", {}, `${formatDay(statement.periodStart)} – ${formatDay(statement.periodEnd)}`),
@@ -1517,14 +1600,16 @@ function cardStatementTable(statements) {
       Number(statement.interest) > 0 ? el("small", { class: "muted block" }, `incl. ${moneyFormat.format(statement.interest)} interest`) : null),
     el("td", { class: "right number" }, moneyFormat.format(statement.minimumPayment)),
     el("td", {}, formatDay(statement.dueOn)),
-    el("td", {}, statementBadge(statement, index === 0))));
+    el("td", {}, statementBadge(statement, index === 0)),
+    el("td", { class: "right" }, el("button", { type: "button", onclick: (event) => downloadCardStatement(event.currentTarget, card, statement) }, "PDF"))));
   return el("div", { class: "table-wrap" }, el("table", {},
     el("thead", {}, el("tr", {},
       el("th", { scope: "col" }, "Period"),
       el("th", { scope: "col", class: "right" }, "Owed"),
       el("th", { scope: "col", class: "right" }, "Minimum"),
       el("th", { scope: "col" }, "Due by"),
-      el("th", { scope: "col" }, "Status"))),
+      el("th", { scope: "col" }, "Status"),
+      el("th", { scope: "col", class: "right" }, "Download"))),
     el("tbody", {}, ...rows)));
 }
 

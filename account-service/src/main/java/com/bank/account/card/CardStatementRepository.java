@@ -11,6 +11,9 @@ interface CardStatementRepository extends JpaRepository<CardStatement, Long> {
 
     Optional<CardStatement> findFirstByCardIdOrderByIdDesc(Long cardId);
 
+    /** The statement made before this one, if there was one. */
+    Optional<CardStatement> findFirstByCardIdAndIdLessThanOrderByIdDesc(Long cardId, Long id);
+
     /** The statement made after this one, if there is one yet. */
     Optional<CardStatement> findFirstByCardIdAndIdGreaterThanOrderByIdAsc(Long cardId, Long id);
 }

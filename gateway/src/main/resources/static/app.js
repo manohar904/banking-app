@@ -137,10 +137,10 @@ async function api(path, options = {}) {
  * Fetches a file, such as a statement, and hands it to the browser to save. Errors come back as JSON,
  * the same as from api().
  */
-async function download(path, fallbackName) {
+async function download(path, fallbackName, type = "application/pdf") {
   let response;
   try {
-    response = await fetch(path, { headers: { Accept: "application/pdf, application/json" } });
+    response = await fetch(path, { headers: { Accept: `${type}, application/json` } });
   } catch {
     throw new ApiError("Could not reach the server. Check that it is running.", 0);
   }
@@ -889,25 +889,33 @@ function accountStatementForm(account) {
   const months = statementMonths(account.createdAt);
   const month = el("select", { "aria-label": "Month" }, ...months.map((option) => el("option", { value: option.value }, option.text)));
   const error = el("span", { class: "field-error", role: "alert" });
-  const button = el("button", { type: "submit" }, "Download PDF");
+  const pdfButton = el("button", { type: "submit" }, "Download PDF");
+  const csvButton = el("button", { type: "button", title:"For Excel or another spreadsheet" },
+    "Download CSV");
+  const fetchFile = async (path, name, type) => {
+    error.textContent = "";
+    pdfButton.disabled = csvButton.disabled = true;
+    try {
+      await download(path, name, type);
+    } catch (failure) {
+      error.textContent = failure.message;
+    }
+    pdfButton.disabled = csvButton.disabled = false;
+  };
+  csvButton.addEventListener("click", () => fetchFile(
+    `/api/accounts/${account.id}/statement.csv?month=${month.value}`,
+    `transactions-${account.accountNumber}-${month.value}.csv`, "text/csv"));
   return el("div", {},
     el("h3", { class: "spaced-top" }, "Statements"),
     el("form", {
       class: "money-form",
       novalidate: "",
-      onsubmit: async (event) => {
+      onsubmit: (event) => {
         event.preventDefault();
-        error.textContent = "";
-        button.disabled = true;
-        try {
-          await download(`/api/accounts/${account.id}/statement?month=${month.value}`,
-            `statement-${account.accountNumber}-${month.value}.pdf`);
-        } catch (failure) {
-          error.textContent = failure.message;
-        }
-        button.disabled = false;
+        fetchFile(`/api/accounts/${account.id}/statement?month=${month.value}`,
+          `statement-${account.accountNumber}-${month.value}.pdf`);
       },
-    }, el("label", {}, "Month", month), button),
+    }, el("label", {}, "Month", month), pdfButton, csvButton),
     error);
 }
 

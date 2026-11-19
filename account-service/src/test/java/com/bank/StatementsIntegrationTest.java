@@ -103,6 +103,52 @@ class StatementsIntegrationTest {
     }
 
     @Test
+    void theSameMonthComesAsACsvForSpreadsheets() throws Exception {
+        long customer = newCustomerId();
+        long account = createAccount(customer);
+        long other = createAccount(newCustomerId());
+        String number = numberOf(account);
+        YearMonth thisMonth = YearMonth.now(ZoneOffset.UTC);
+        deposit(account, "1500.00");
+        moveToLastMonth(account);
+        withdraw(account, "120.00");
+        transfer(account, numberOf(other), "30.00");
+        deposit(account, "45.50");
+
+        byte[] body = mockMvc.perform(asCustomer(customer, get("/api/accounts/{id}/statement.csv", account)))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_TYPE, "text/csv;charset=UTF-8"))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"transactions-" + number + "-" + thisMonth + ".csv\""))
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+                .andReturn().getResponse().getContentAsByteArray();
+        String csv = new String(body, java.nio.charset.StandardCharsets.UTF_8);
+        String today = LocalDate.now(ZoneOffset.UTC).toString();
+        assertThat(csv).startsWith("\uFEFFDate,Time,Description,Money out,Money in,Balance\r\n");
+        String[] lines = csv.substring(1).split("\r\n");
+        assertThat(lines).hasSize(4); // header and this month's three entries, not last month's deposit
+        assertThat(lines[1]).startsWith(today + ",").endsWith(",Withdrawal,120.00,,1380.00");
+        assertThat(lines[2]).endsWith(",Transfer to " + numberOf(other) + ",30.00,,1350.00");
+        assertThat(lines[3]).endsWith(",Deposit,,45.50,1395.50");
+        assertThat(lines[1].split(",")[1]).matches("\\d\\d:\\d\\d");
+
+        String last = mockMvc.perform(asStaff(get("/api/accounts/{id}/statement.csv", account)
+                        .param("month", thisMonth.minusMonths(1).toString())))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(
+                        java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(last.split("\r\n")).hasSize(2);
+        assertThat(last).contains(",Deposit,,1500.00,1500.00\r\n");
+
+        mockMvc.perform(asCustomer(customer, get("/api/accounts/{id}/statement.csv", account)
+                .param("month", thisMonth.plusMonths(1).toString()))).andExpect(status().isBadRequest());
+        mockMvc.perform(asCustomer(customer, get("/api/accounts/{id}/statement.csv", account)
+                .param("month", thisMonth.minusMonths(2).toString()))).andExpect(status().isBadRequest());
+        mockMvc.perform(asCustomer(newCustomerId(), get("/api/accounts/{id}/statement.csv", account)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/accounts/{id}/statement.csv", account)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void anAccountWithNothingInTheMonthStillGetsAStatementWithoutTheNameIfItCannotBeHad() throws Exception {
         long customer = newCustomerId();
         when(customerService.nameOf(customer)).thenReturn(Optional.empty());

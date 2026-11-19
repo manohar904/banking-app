@@ -278,6 +278,11 @@ Customers (and staff) can download statements as PDF files from the app:
   now, for the month still going). Months start at midnight in `TRANSFER_LIMIT_TIMEZONE`. Only months the
   account was open can be picked. API: `GET /api/accounts/{id}/statement?month=YYYY-MM` (no `month` means
   this one).
+- **Accounts, for spreadsheets:** **Download CSV** next to it gives the same month's entries as a CSV
+  file that opens in Excel, Numbers or Google Sheets: one line per entry with date, time, description,
+  money out, money in and balance. Amounts are plain numbers (`1234.50`) so they can be added up; the file
+  is UTF-8 with a byte order mark and CRLF line ends, and text a spreadsheet would run as a formula is
+  kept as text. API: `GET /api/accounts/{id}/statement.csv?month=YYYY-MM`.
 - **Credit cards:** each statement in a card's list has a **PDF** button. The PDF lists every purchase,
   payment and interest charge since the statement before, adding up from what was owed then to what is
   owed now, with the minimum payment and due date. API: `GET /api/cards/{id}/statements/{statementId}/pdf`.

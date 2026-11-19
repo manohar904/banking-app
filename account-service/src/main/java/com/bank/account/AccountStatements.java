@@ -1,5 +1,6 @@
 package com.bank.account;
 
+import com.bank.account.statement.StatementCsv;
 import com.bank.account.statement.StatementPdf;
 import com.bank.account.statement.StatementPdf.Column;
 import com.bank.common.ResourceNotFoundException;
@@ -23,7 +24,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 /**
  * An account's statement for one calendar month, as a PDF: the balance at the start, every entry in the
- * month, and the balance at the end. Months start at midnight in the bank's time zone, the same one the
+ * month, and the balance at the end. The same entries also come as a CSV for spreadsheets. Months start at midnight in the bank's time zone, the same one the
  * daily transfer limit uses. The month still going shows everything so far.
  */
 @Service
@@ -56,31 +57,17 @@ public class AccountStatements {
      * account was opened or still to come is a 400.
      */
     public File forMonth(Long accountId, YearMonth asked) {
-        Account account = accounts.findById(accountId)
-                .orElseThrow(() -> new ResourceNotFoundException("Account " + accountId + " not found."));
+        Month statement = month(accountId, asked);
+        Account account = statement.account();
+        YearMonth month = statement.month();
         ZoneId zone = clock.getZone();
-        YearMonth now = YearMonth.now(clock);
-        YearMonth month = asked == null ? now : asked;
-        YearMonth opened = YearMonth.from(account.getCreatedAt().atZone(zone));
-        if (month.isAfter(now)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "There is no statement for a month still to come.");
-        }
-        if (month.isBefore(opened)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "The account was opened in " + MONTH.format(opened) + ".");
-        }
-
-        Instant from = month.atDay(1).atStartOfDay(zone).toInstant();
-        Instant until = month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant();
-        BigDecimal opening = ledger.findFirstByAccountIdAndCreatedAtLessThanOrderByIdDesc(accountId, from)
-                .map(AccountTransaction::getBalanceAfter).orElse(BigDecimal.ZERO.setScale(2));
-        List<AccountTransaction> entries =
-                ledger.findByAccountIdAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderById(accountId, from, until);
+        BigDecimal opening = statement.opening();
+        List<AccountTransaction> entries = statement.entries();
 
         BigDecimal in = BigDecimal.ZERO.setScale(2);
         BigDecimal out = BigDecimal.ZERO.setScale(2);
         BigDecimal closing = opening;
-        boolean soFar = month.equals(now);
+        boolean soFar = statement.soFar();
         LocalDate lastDay = soFar ? LocalDate.now(clock) : month.atEndOfMonth();
 
         StatementPdf pdf = new StatementPdf("Account statement");
@@ -112,6 +99,57 @@ public class AccountStatements {
                 .summary(soFar ? "Balance now" : "Balance at the end", StatementPdf.money(closing))
                 .footnote("If anything here looks wrong, please contact the bank through Help.");
         return new File("statement-" + account.getAccountNumber() + "-" + month + ".pdf", pdf.toBytes());
+    }
+
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT);
+
+    /**
+     * The same month's entries as the PDF, as a CSV to open in a spreadsheet: one line per entry, oldest
+     * first, with the date and time in the bank's time zone. Same checks as {@link #forMonth}.
+     */
+    public File csvForMonth(Long accountId, YearMonth asked) {
+        Month statement = month(accountId, asked);
+        ZoneId zone = clock.getZone();
+        StatementCsv csv = new StatementCsv("Date", "Time", "Description", "Money out", "Money in", "Balance");
+        for (AccountTransaction entry : statement.entries()) {
+            boolean isOut = MONEY_OUT.contains(entry.getType());
+            var at = entry.getCreatedAt().atZone(zone);
+            csv.row(at.toLocalDate().toString(), TIME.format(at), describe(entry),
+                    isOut ? entry.getAmount() : null, isOut ? null : entry.getAmount(), entry.getBalanceAfter());
+        }
+        return new File("transactions-" + statement.account().getAccountNumber() + "-" + statement.month() + ".csv",
+                csv.toBytes());
+    }
+
+    /** A month asked for, checked, with the balance before it and its entries. */
+    private record Month(Account account, YearMonth month, boolean soFar, BigDecimal opening,
+            List<AccountTransaction> entries) {
+    }
+
+    /**
+     * No month means this one. A month before the account was opened or still to come is a 400.
+     */
+    private Month month(Long accountId, YearMonth asked) {
+        Account account = accounts.findById(accountId)
+                .orElseThrow(() -> new ResourceNotFoundException("Account " + accountId + " not found."));
+        ZoneId zone = clock.getZone();
+        YearMonth now = YearMonth.now(clock);
+        YearMonth month = asked == null ? now : asked;
+        YearMonth opened = YearMonth.from(account.getCreatedAt().atZone(zone));
+        if (month.isAfter(now)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "There is no statement for a month still to come.");
+        }
+        if (month.isBefore(opened)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "The account was opened in " + MONTH.format(opened) + ".");
+        }
+        Instant from = month.atDay(1).atStartOfDay(zone).toInstant();
+        Instant until = month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant();
+        BigDecimal opening = ledger.findFirstByAccountIdAndCreatedAtLessThanOrderByIdDesc(accountId, from)
+                .map(AccountTransaction::getBalanceAfter).orElse(BigDecimal.ZERO.setScale(2));
+        List<AccountTransaction> entries =
+                ledger.findByAccountIdAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderById(accountId, from, until);
+        return new Month(account, month, month.equals(now), opening, entries);
     }
 
     /** One calendar month's money in and out, and the balance at its end (or now, for this month). */

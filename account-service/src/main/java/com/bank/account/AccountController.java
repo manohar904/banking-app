@@ -7,10 +7,12 @@ import com.bank.account.dto.TransactionResponse;
 import com.bank.account.dto.TransferAllowanceResponse;
 import com.bank.account.dto.TransferRequest;
 import com.bank.account.savings.SavingsInterest;
+import com.bank.account.statement.StatementCsv;
 import com.bank.account.statement.StatementPdf;
 import com.bank.common.security.Callers;
 import jakarta.validation.Valid;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.YearMonth;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -131,10 +133,23 @@ public class AccountController {
         return asDownload(file.name(), file.content());
     }
 
-    /** Sent as an attachment, so the browser saves it under this name rather than showing it. */
+    /** The same month's entries as a CSV for spreadsheets, this month unless month=YYYY-MM says otherwise. */
+    @PreAuthorize("@access.canViewAccount(authentication, #id)")
+    @GetMapping(value = "/{id}/statement.csv", produces = StatementCsv.CONTENT_TYPE)
+    public ResponseEntity<byte[]> statementCsv(@PathVariable Long id, @RequestParam(required = false) YearMonth month) {
+        AccountStatements.File file = accountStatements.csvForMonth(id, month);
+        return asDownload(file.name(), file.content(), new MediaType("text", "csv", StandardCharsets.UTF_8));
+    }
+
+    /** A PDF sent as an attachment, so the browser saves it under this name rather than showing it. */
     public static ResponseEntity<byte[]> asDownload(String name, byte[] content) {
+        return asDownload(name, content, MediaType.APPLICATION_PDF);
+    }
+
+    /** Sent as an attachment, so the browser saves it under this name rather than showing it. */
+    public static ResponseEntity<byte[]> asDownload(String name, byte[] content, MediaType type) {
         return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_PDF)
+                .contentType(type)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(name).build().toString())
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .body(content);

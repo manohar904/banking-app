@@ -26,7 +26,8 @@ public class PasswordResetController {
     private final RestClient authService;
 
     PasswordResetController(InternalClients clients, @Value("${bank.services.auth-url}") String authUrl) {
-        this.authService = clients.to(authUrl);
+        // Asking for a reset waits for the email with the link to be sent.
+        this.authService = clients.to(authUrl, InternalClients.SENDS_EMAIL_TIMEOUT);
     }
 
     @PostMapping("/api/auth/password-reset")

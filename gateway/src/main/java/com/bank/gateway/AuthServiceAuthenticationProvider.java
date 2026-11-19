@@ -32,7 +32,8 @@ public class AuthServiceAuthenticationProvider implements AuthenticationProvider
     private final RestClient authService;
 
     AuthServiceAuthenticationProvider(InternalClients clients, @Value("${bank.services.auth-url}") String authUrl) {
-        this.authService = clients.to(authUrl);
+        // With two-step sign-in on, the answer waits for the code email to be sent.
+        this.authService = clients.to(authUrl, InternalClients.SENDS_EMAIL_TIMEOUT);
     }
 
     @Override

@@ -18,6 +18,12 @@ public class InternalClients {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
+    /**
+     * For calls whose answer waits on an email being sent (a sign-in code, a password reset link):
+     * Gmail often takes more than 5 seconds, and giving up early shows an error although the email
+     * still arrives. The mail server's own timeouts are what end a call to a mail server that is down.
+     */
+    public static final Duration SENDS_EMAIL_TIMEOUT = Duration.ofSeconds(30);
 
     private final InternalTokens tokens;
     private final InternalTls tls;
@@ -25,12 +31,17 @@ public class InternalClients {
     private final ObservationRegistry observationRegistry;
 
     public RestClient to(String baseUrl) {
+        return to(baseUrl, READ_TIMEOUT);
+    }
+
+    /** As {@link #to(String)}, waiting up to readTimeout for each answer. */
+    public RestClient to(String baseUrl, Duration readTimeout) {
         HttpClient httpClient = tls.configure(HttpClient.newBuilder())
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(READ_TIMEOUT);
+        requestFactory.setReadTimeout(readTimeout);
         return RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(requestFactory)

@@ -442,6 +442,17 @@ class GatewayTest {
         }
     }
 
+    @Test
+    void aSignInWhoseCodeEmailIsSlowToSendStillAsksForTheCode() throws Exception {
+        auth.twoStep.set(true);
+        auth.signInDelayMillis.set(6_000); // longer than the usual 5 seconds for calls between services
+
+        HttpResponse<String> response = browser.signIn();
+
+        assertThat(response.statusCode()).isEqualTo(202);
+        assertThat(response.body()).contains("\"codeRequired\":true");
+    }
+
     /** Keeps cookies and sends the CSRF token back, as the front end does. */
     @Test
     void withTwoStepSignInTheSessionIsOnlySignedInOnceTheCodeIsRight() throws Exception {
@@ -583,6 +594,8 @@ class GatewayTest {
         static final String CODE_ID = "5f0c7a52-3d3e-4c1e-9a55-0d6f8c2b9e11";
         final AtomicReference<Boolean> twoStep = new AtomicReference<>(false);
         final AtomicReference<String> lastCodeBody = new AtomicReference<>();
+        /** How long a password check takes, as when the code email is slow to send. */
+        final AtomicInteger signInDelayMillis = new AtomicInteger();
         private volatile int status = 200;
         private volatile String body = "{}";
         private final int port;
@@ -614,6 +627,7 @@ class GatewayTest {
             hangUp.set(false);
             twoStep.set(false);
             lastCodeBody.set(null);
+            signInDelayMillis.set(0);
             answer(200, "{}");
         }
 
@@ -647,6 +661,13 @@ class GatewayTest {
             if (exchange.getRequestURI().getPath().equals("/internal/authentications")) {
                 passwordChecks.incrementAndGet();
                 lastSignInBody.set(requestBody);
+                if (signInDelayMillis.get() > 0) {
+                    try {
+                        Thread.sleep(signInDelayMillis.get());
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
                 if (signInsLimited.get()) {
                     respond(exchange, 429, "{}");
                     return;

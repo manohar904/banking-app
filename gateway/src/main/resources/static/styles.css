@@ -327,6 +327,31 @@ body.customer-view .layout { grid-template-columns: minmax(0, 1fr); max-width: 8
 .balance-label { margin: 0; font-size: 0.9rem; opacity: 0.92; }
 .balance { margin: 4px 0 0; font-size: 2.1rem; letter-spacing: -0.02em; }
 
+/* A savings account's goal. The bar uses the savings card's colours, and green once it is reached. */
+.goal {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.goal p { margin: 6px 0 0; }
+.goal-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.goal-empty p { margin: 0; }
+.goal-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.goal-head h3 { margin: 0; overflow-wrap: anywhere; }
+.goal-amounts { font-variant-numeric: tabular-nums; }
+.goal-amounts .money { font-weight: 700; font-size: 1.15rem; }
+.goal-bar {
+  height: 12px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.goal-bar span { display: block; height: 100%; min-width: 0; border-radius: inherit; background: var(--card-savings); }
+.goal-bar-done span { background: var(--positive); }
+
 .money-form {
   display: flex;
   flex-wrap: wrap;

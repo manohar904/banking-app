@@ -58,7 +58,8 @@ class ApiError extends Error {
 
 const MONEY_FIELDS = new Set(["balance", "amount", "balanceAfter", "dailyLimit", "sentToday", "remainingToday",
   "principal", "monthlyPayment", "remainingPrincipal", "nextPaymentAmount", "totalRepayable", "totalInterest",
-  "interest", "remainingAfter", "minAmount", "maxAmount", "creditLimit", "owed", "available", "owedAfter"]);
+  "interest", "remainingAfter", "minAmount", "maxAmount", "creditLimit", "owed", "available", "owedAfter",
+  "targetAmount", "remaining", "perMonth"]);
 
 /**
  * Keeps money as the digits the server sent. As a JavaScript number, a large balance
@@ -66,7 +67,8 @@ const MONEY_FIELDS = new Set(["balance", "amount", "balanceAfter", "dailyLimit",
  * fall back to a number, which is exact for ordinary balances.
  */
 function keepExactMoney(key, value, context) {
-  return MONEY_FIELDS.has(key) && context?.source ? context.source : value;
+  // Only numbers: a null amount must stay null, not become the text "null".
+  return MONEY_FIELDS.has(key) && typeof value === "number" && context?.source ? context.source : value;
 }
 
 /** The server sets this cookie and checks that writes send the value back in a header. */
@@ -315,15 +317,17 @@ async function fetchAllAccounts(customerId) {
 async function selectAccount(id, transactionPage = 0) {
   const version = ++selectionVersion;
   try {
-    const [account, transactions, allowance, summary] = await Promise.all([
+    const [account, transactions, allowance, summary, goal] = await Promise.all([
       api(`/api/accounts/${id}`),
       api(`/api/accounts/${id}/transactions?page=${transactionPage}&size=${TRANSACTION_PAGE_SIZE}`),
       api(`/api/accounts/${id}/transfer-allowance`),
-      // The rest of the page still works without the chart.
+      // The rest of the page still works without the chart or the goal.
       api(`/api/accounts/${id}/summary?months=12`).catch(() => null),
+      api(`/api/accounts/${id}/goal`).catch(() => undefined),
     ]);
     if (version !== selectionVersion) return;
     state.account = account;
+    state.goal = goal; // null: no goal; undefined: it could not be loaded
     state.loan = null;
     state.card = null;
     state.allowance = allowance;
@@ -620,6 +624,81 @@ function savingsInterestText(account) {
   return `${rate}, worked out on each day's closing balance and paid on the 1st of each month for the month before.${next}`;
 }
 
+/* ---------- Savings goal ---------- */
+
+/** The goal's card on a savings account: how far along it is, or a button to set one. */
+function savingsGoalSection(account, goal) {
+  if (goal === undefined) return null; // Could not be loaded; the rest of the page still works.
+  if (goal === null) {
+    return el("div", { class: "goal goal-empty" },
+      el("p", { class: "muted" }, "Saving for something? Set a goal to see how close you are."),
+      el("button", { type: "button", onclick: () => openGoalDialog(account, null) }, "Set a goal"));
+  }
+  const percent = Math.max(0, Math.min(100, goal.percent));
+  // Set through the style property: the page's content security policy blocks style attributes.
+  const fill = el("span");
+  fill.style.width = `${percent}%`;
+  let detail;
+  if (goal.reached) {
+    detail = el("p", {}, el("span", { class: "badge badge-money" }, "Goal reached"), " Well done.");
+  } else {
+    const parts = [`${moneyFormat.format(goal.remaining)} to go.`];
+    if (goal.perMonth != null) {
+      parts.push(`Save ${moneyFormat.format(goal.perMonth)} a month to reach it by ${formatDay(goal.targetDate)}.`);
+    } else if (goal.pastTargetDate) {
+      parts.push(`The date you set, ${formatDay(goal.targetDate)}, has passed. Change the goal to pick a new one.`);
+    }
+    detail = el("p", { class: "muted" }, parts.join(" "));
+  }
+  return el("div", { class: "goal" },
+    el("div", { class: "goal-head" },
+      el("h3", {}, goal.name),
+      el("div", { class: "button-row" },
+        el("button", { type: "button", onclick: () => openGoalDialog(account, goal) }, "Change"),
+        el("button", { type: "button", onclick: () => confirmRemoveGoal(account, goal) }, "Remove"))),
+    el("p", { class: "goal-amounts" },
+      el("span", { class: "money" }, moneyFormat.format(goal.balance)),
+      ` of ${moneyFormat.format(goal.targetAmount)} · ${percent}%`),
+    el("div", {
+      class: `goal-bar${goal.reached ? " goal-bar-done" : ""}`,
+      role: "progressbar",
+      "aria-label": `${goal.name}: ${percent}% saved`,
+      "aria-valuemin": "0",
+      "aria-valuemax": "100",
+      "aria-valuenow": String(percent),
+    }, fill),
+    detail);
+}
+
+let goalAccount = null;
+
+function openGoalDialog(account, goal) {
+  goalAccount = account;
+  const form = $("goal-form");
+  form.reset();
+  showFormError(form, null);
+  clearFieldErrors(form);
+  form.querySelector("[data-goal-title]").textContent = goal ? "Change the savings goal" : "Set a savings goal";
+  const today = new Date();
+  form.elements.targetDate.min = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  if (goal) {
+    form.elements.name.value = goal.name;
+    form.elements.targetAmount.value = goal.targetAmount;
+    form.elements.targetDate.value = goal.targetDate ?? "";
+  }
+  $("goal-dialog").showModal();
+}
+
+function confirmRemoveGoal(account, goal) {
+  openConfirm("Remove this goal?",
+    `The goal "${goal.name}" will be removed. The money in the account stays where it is.`,
+    async () => {
+      await api(`/api/accounts/${account.id}/goal`, { method: "DELETE" });
+      toast("Goal removed.");
+      await selectAccount(account.id);
+    }, "Remove");
+}
+
 /** Customers have a daily limit on the transfers they send themselves; staff transfers have none. */
 function allowanceText({ dailyLimit, remainingToday }) {
   const remaining = moneyFormat.format(remainingToday);
@@ -703,6 +782,7 @@ function accountPanel() {
       el("p", { class: "balance-label" }, "Balance"),
       el("p", { class: "balance money" }, moneyFormat.format(account.balance))),
     account.type === "SAVINGS" ? el("p", { class: "muted" }, savingsInterestText(account)) : null,
+    account.type === "SAVINGS" ? savingsGoalSection(account, state.goal) : null,
     isStaff()
       ? el("form", {
           class: "money-form",
@@ -2437,6 +2517,24 @@ $("payee-form").onsubmit = (event) => {
     });
     toast("Payee saved.");
     await refreshPayees();
+  });
+};
+
+$("goal-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const account = goalAccount;
+  submitDialog($("goal-dialog"), form, async () => {
+    await api(`/api/accounts/${account.id}/goal`, {
+      method: "PUT",
+      body: {
+        name: form.elements.name.value.trim(),
+        targetAmount: form.elements.targetAmount.value.trim().replace(/,/g, ""),
+        targetDate: form.elements.targetDate.value || null,
+      },
+    });
+    toast("Goal saved.");
+    await selectAccount(account.id);
   });
 };
 

@@ -24,6 +24,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalManagementPort;
@@ -46,6 +49,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
                 "management.server.port=0",
                 "spring.data.redis.password="
         })
+@ExtendWith(OutputCaptureExtension.class)
 @Testcontainers
 class GatewayTest {
 
@@ -424,13 +428,15 @@ class GatewayTest {
     }
 
     @Test
-    void authServiceBeingDownIsNotReportedAsAWrongPassword() throws Exception {
+    void authServiceBeingDownIsNotReportedAsAWrongPasswordAndTheCauseIsLogged(CapturedOutput output) throws Exception {
         auth.stop();
         try {
             HttpResponse<String> response = browser.signIn();
 
             assertThat(response.statusCode()).isEqualTo(503);
             assertThat(response.body()).contains("temporarily unavailable");
+            assertThat(output.getOut()).contains("Sign-in could not be completed: The auth service could not check the password.")
+                    .contains("ResourceAccessException");
         } finally {
             auth.start();
         }

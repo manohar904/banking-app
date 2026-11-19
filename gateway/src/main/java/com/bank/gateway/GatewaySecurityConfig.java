@@ -2,6 +2,7 @@ package com.bank.gateway;
 
 import com.bank.common.security.InternalTokens;
 import com.bank.common.security.Problems;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,6 +23,7 @@ import org.springframework.security.web.authentication.logout.HttpStatusReturnin
  * <p>This only decides who is calling. What they may do is decided by the service that owns the
  * data, so the rules cannot drift apart. Anything not listed is refused, which includes /internal.
  */
+@Slf4j
 @Configuration
 public class GatewaySecurityConfig {
 
@@ -67,7 +69,10 @@ public class GatewaySecurityConfig {
                                 Problems.write(response, HttpStatus.TOO_MANY_REQUESTS,
                                         "Too many sign-in attempts. Please wait up to 15 minutes and try again.");
                             } else if (exception instanceof AuthenticationServiceException) {
-                                // Not the user's mistake, so do not tell them the password is wrong.
+                                // Not the user's mistake, so do not tell them the password is wrong. The
+                                // cause is logged, without the email or password, so it can be looked into.
+                                log.warn("Sign-in could not be completed: {}", exception.getMessage(),
+                                        exception.getCause() != null ? exception.getCause() : exception);
                                 Problems.write(response, HttpStatus.SERVICE_UNAVAILABLE,
                                         "Sign-in is temporarily unavailable. Please try again shortly.");
                             } else {

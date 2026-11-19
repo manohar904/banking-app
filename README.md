@@ -314,6 +314,19 @@ job sees it; existing ones were given the first of next month when this was adde
 over the first of a month, the missing months are paid one per run. Each payment sends a transaction
 email, and the account page shows the rate and the next payment day. Checking accounts earn nothing.
 
+### Savings goals
+
+A savings account can have one goal: what it is for ("Holiday", up to 40 characters), an amount and,
+if wanted, a date to reach it by. On the account's page, **Set a goal** opens a form; the goal then shows
+the balance against the amount with a progress bar, what is left to save, and with a date, how much to
+save each month (this month included, rounded up to the cent). Progress is simply the account's balance,
+so deposits, transfers and interest all count straight away. **Change** and **Remove** edit or drop it;
+removing a goal moves no money. The account's owner and staff can set one; deleting the account removes it.
+
+API: `GET /api/accounts/{id}/goal` (204 when there is none), `PUT /api/accounts/{id}/goal` with
+`{"name", "targetAmount", "targetDate"}` (the date is optional and cannot be in the past), and
+`DELETE /api/accounts/{id}/goal`. Only savings accounts can have one.
+
 ### Scheduled payments
 
 A customer (or staff, for them) can set up a monthly payment from one of their accounts to any account

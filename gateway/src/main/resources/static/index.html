@@ -178,6 +178,30 @@
     </form>
   </dialog>
 
+  <dialog id="goal-dialog">
+    <form id="goal-form" method="dialog" novalidate>
+      <h2 data-goal-title>Set a savings goal</h2>
+      <p class="muted">Name what you are saving for and how much you need. The account's balance shows how far along you are.</p>
+      <p class="form-error" data-form-error hidden></p>
+      <label>Saving for
+        <input name="name" maxlength="40" autocomplete="off" placeholder="For example, Holiday" required>
+        <span class="field-error" data-error-for="name"></span>
+      </label>
+      <label>Amount
+        <input name="targetAmount" inputmode="decimal" autocomplete="off" placeholder="2000.00" required>
+        <span class="field-error" data-error-for="targetAmount"></span>
+      </label>
+      <label>Reach it by <small class="muted">(optional)</small>
+        <input name="targetDate" type="date">
+        <span class="field-error" data-error-for="targetDate"></span>
+      </label>
+      <div class="actions">
+        <button type="button" data-cancel>Cancel</button>
+        <button class="primary" type="submit">Save goal</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="scheduled-dialog">
     <form id="scheduled-form" method="dialog" novalidate>
       <h2>Set up a monthly payment</h2>

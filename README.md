@@ -640,6 +640,40 @@ The domain must use Cloudflare for its DNS. In the [Cloudflare dashboard](https:
 Without `--profile public` the tunnel does not run and the bank is on `localhost` only, even with the
 token in `.env`. To take the bank off the internet: `docker compose stop cloudflared`.
 
+## On your own devices, without a domain (Tailscale)
+
+[Tailscale](https://tailscale.com) joins this computer and your phone or laptop into a private network
+(a "tailnet"). The bank gets an address like `https://my-pc.tail1234.ts.net`, with a real certificate,
+that only devices signed in to your Tailscale account can open. Nothing is public, no domain is
+needed, and it is free for personal use. Like the tunnel, it only works while this computer and
+Docker are on. Use this or "Real domain" above, not both.
+
+1. Install Tailscale on this computer (https://tailscale.com/download) and on each device you want
+   to use, and sign in to all of them with the same account.
+2. At https://login.tailscale.com/admin/dns, check **MagicDNS** is on and click **Enable HTTPS**.
+3. Pass the address on to the gateway, for your tailnet only:
+
+   ```
+   & "C:\Program Files\Tailscale\tailscale.exe" serve --bg https+insecure://localhost:8443
+   ```
+
+   It prints the address, ending in `.ts.net`, and says **tailnet only**. `https+insecure` is fine
+   here: it only skips checking the gateway's own certificate on this computer, while browsers get
+   Tailscale's real one. Do not use `tailscale funnel`, which would put the bank on the internet.
+4. Add to `.env`, with your address, then apply it with
+   `docker compose --profile monitoring up -d --no-build` (the gateway and auth service restart):
+
+   ```
+   APP_BASE_URL=https://my-pc.tail1234.ts.net
+   GATEWAY_FORWARD_HEADERS=native
+   ```
+
+   As with the tunnel, password-reset links then use that address and it gets HSTS; `localhost` does
+   not. The gateway's ports stay on this computer only, so reading `X-Forwarded-For` is safe.
+
+The setting survives restarts: Tailscale starts with Windows and remembers it.
+`tailscale serve status` shows it, and `tailscale serve --https=443 off` stops it.
+
 ## Before production
 
 This is set up for local development. Before real use:

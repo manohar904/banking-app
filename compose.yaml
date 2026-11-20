@@ -540,6 +540,9 @@ services:
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       # "native" reads the browser address from X-Forwarded-For. Only behind a trusted proxy; see README.md.
       SERVER_FORWARD_HEADERS_STRATEGY: ${GATEWAY_FORWARD_HEADERS:-none}
+      # The bank's public address, if it has one ("Real domain" in README.md). Turns on HSTS for that
+      # name only; localhost never gets it.
+      BANK_PUBLICURL: ${APP_BASE_URL:-}
       REDIS_HOST: redis
       # Sessions in Redis go over TLS too, trusting only the stack's certificate authority.
       SPRING_DATA_REDIS_SSL_BUNDLE: internal
@@ -553,6 +556,32 @@ services:
       timeout: 3s
       retries: 6
       start_period: 30s
+
+  # Puts the bank on its real domain through a Cloudflare Tunnel: an outgoing connection to Cloudflare,
+  # so nothing on the router is opened. Only starts with --profile public and CLOUDFLARE_TUNNEL_TOKEN
+  # in .env. The hostname, the address it forwards to (https://gateway:8443) and who may reach it are
+  # set in the Cloudflare dashboard; see README.md, "Real domain". It checks the gateway's certificate
+  # against the stack's own authority, which is all it can see of the certs volume.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.2
+    profiles: [public]
+    command: ["tunnel", "--no-autoupdate", "--metrics", "0.0.0.0:2000", "run"]
+    environment:
+      # Not ":?": that would stop every compose command, even without --profile public.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    volumes:
+      - *ca-mount
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "localhost:2000", "ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    <<: *service
+    mem_limit: 128m
 
   # --- Monitoring. Everything below only starts with --profile monitoring. ---
   # Published to this computer only, and without passwords on Elasticsearch and Kibana: for local use.

@@ -2,6 +2,8 @@ package com.bank.gateway;
 
 import com.bank.common.security.InternalTokens;
 import com.bank.common.security.Problems;
+import java.net.URI;
+import java.time.Duration;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -31,7 +33,9 @@ public class GatewaySecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http, AuthServiceAuthenticationProvider authService,
             @Value("${" + HttpRedirect.PORT + ":}") String redirectPort,
             @Value("${bank.http-redirect.browser-http-port:0}") int browserHttpPort,
-            @Value("${bank.http-redirect.browser-https-port:0}") int browserHttpsPort) throws Exception {
+            @Value("${bank.http-redirect.browser-https-port:0}") int browserHttpsPort,
+            @Value("${bank.public-url:}") String publicUrl) throws Exception {
+        String publicHost = publicHost(publicUrl);
         http
                 // Not authenticationProvider(): Spring would also add this bean to a parent manager,
                 // which is asked again after a failure, so each failed sign-in would be checked twice.
@@ -94,9 +98,19 @@ public class GatewaySecurityConfig {
                 .headers(headers -> headers
                         .contentSecurityPolicy(csp -> csp.policyDirectives(
                                 "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"))
-                        // No HSTS: for "localhost" a browser would apply it to every port, including
-                        // Kibana and Grafana, which are plain HTTP. Turn it on with a real domain name.
-                        .httpStrictTransportSecurity(hsts -> hsts.disable()));
+                        // HSTS only on the real domain name, over HTTPS. For "localhost" a browser would
+                        // apply it to every port, including Kibana and Grafana, which are plain HTTP. Not
+                        // for subdomains either: other sites on the same domain are not the bank's to decide.
+                        .httpStrictTransportSecurity(hsts -> {
+                            if (publicHost == null) {
+                                hsts.disable();
+                            } else {
+                                hsts.requestMatcher(request -> request.isSecure()
+                                                && publicHost.equalsIgnoreCase(request.getServerName()))
+                                        .includeSubDomains(false)
+                                        .maxAgeInSeconds(Duration.ofDays(365).toSeconds());
+                            }
+                        }));
         if (!redirectPort.isBlank()) {
             // Anything arriving on the plain HTTP port (see HttpRedirect) is sent on to HTTPS. The
             // ports are the ones the browser sees, which compose.yaml may publish differently.
@@ -104,5 +118,24 @@ public class GatewaySecurityConfig {
                     .portMapper(ports -> ports.http(browserHttpPort).mapsTo(browserHttpsPort));
         }
         return http.build();
+    }
+
+    /** The host name of the bank's public HTTPS address, or null when it has none or it is this computer. */
+    static String publicHost(String publicUrl) {
+        if (publicUrl == null || publicUrl.isBlank()) {
+            return null;
+        }
+        URI uri;
+        try {
+            uri = URI.create(publicUrl.strip());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("bank.public-url is not a valid address: " + publicUrl, e);
+        }
+        String host = uri.getHost();
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || host.equalsIgnoreCase("localhost")
+                || host.startsWith("127.") || host.equals("[::1]")) {
+            return null;
+        }
+        return host;
     }
 }

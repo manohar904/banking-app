@@ -72,8 +72,10 @@ public class TransactionEmails {
         if (data.path("amount").decimalValue().signum() == 0) {
             return; // A statement with nothing owed needs no email.
         }
+        // A spending alert was asked for on purpose, so it is sent even with the other emails turned off.
+        boolean askedFor = event.path("type").asString("").equals("SPENDING_ALERT_PASSED");
         customers.findById(data.path("customerId").asLong())
-                .filter(Customer::isTransactionEmailsEnabled)
+                .filter(customer -> askedFor || customer.isTransactionEmailsEnabled())
                 .ifPresent(customer -> queue(event.path("eventId").asString(), customer, headline, data));
     }
 
@@ -107,6 +109,7 @@ public class TransactionEmails {
             case "CARD_STATEMENT" -> "Your statement: %s owed on your card ending %s";
             case "CARD_LIMIT_NEARLY_REACHED" -> "You now owe %s on your card ending %s, close to its limit";
             case "SCHEDULED_PAYMENT_NOT_SENT" -> "Scheduled payment of %s could not be sent from your account ending %s";
+            case "SPENDING_ALERT_PASSED" -> "You have spent %s this month from your account ending %s";
             default -> null;
         };
     }
@@ -121,6 +124,11 @@ public class TransactionEmails {
                     ? "Interest added: " + money(data.path("interest")) + "\n" : "";
             return interest + "Minimum payment: " + money(data.path("minimumPayment")) + ", due by "
                     + data.path("dueOn").asString() + "\nPay it all by then and no interest is added.\n";
+        }
+        if (data.path("alertAmount").isNumber()) {
+            return "That is more than the " + money(data.path("alertAmount"))
+                    + " you asked to be told about. Payments still go through as normal.\n"
+                    + "You can change or remove this alert on the account's page.\n";
         }
         if (data.path("creditLimit").isNumber()) {
             return "The card's limit is " + money(data.path("creditLimit"))

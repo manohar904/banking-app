@@ -317,17 +317,19 @@ async function fetchAllAccounts(customerId) {
 async function selectAccount(id, transactionPage = 0) {
   const version = ++selectionVersion;
   try {
-    const [account, transactions, allowance, summary, goal] = await Promise.all([
+    const [account, transactions, allowance, summary, goal, spendingAlert] = await Promise.all([
       api(`/api/accounts/${id}`),
       api(`/api/accounts/${id}/transactions?page=${transactionPage}&size=${TRANSACTION_PAGE_SIZE}`),
       api(`/api/accounts/${id}/transfer-allowance`),
-      // The rest of the page still works without the chart or the goal.
+      // The rest of the page still works without the chart, the goal or the spending alert.
       api(`/api/accounts/${id}/summary?months=12`).catch(() => null),
       api(`/api/accounts/${id}/goal`).catch(() => undefined),
+      api(`/api/accounts/${id}/spending-alert`).catch(() => undefined),
     ]);
     if (version !== selectionVersion) return;
     state.account = account;
     state.goal = goal; // null: no goal; undefined: it could not be loaded
+    state.spendingAlert = spendingAlert; // the same
     state.loan = null;
     state.card = null;
     state.allowance = allowance;
@@ -699,6 +701,68 @@ function confirmRemoveGoal(account, goal) {
     }, "Remove");
 }
 
+/* ---------- Spending alert ---------- */
+
+/** This month's money out against the amount the customer wants an email about, or a button to set one. */
+function spendingAlertSection(account, alert) {
+  if (alert === undefined) return null; // Could not be loaded; the rest of the page still works.
+  if (alert === null) {
+    return el("div", { class: "goal goal-empty" },
+      el("p", { class: "muted" }, "Want an email if this month's spending goes over an amount you choose?"),
+      el("button", { type: "button", onclick: () => openSpendingAlertDialog(account, null) }, "Set a spending alert"));
+  }
+  const percent = Math.max(0, Math.min(100, alert.percent));
+  // Set through the style property: the page's content security policy blocks style attributes.
+  const fill = el("span");
+  fill.style.width = `${percent}%`;
+  const detail = alert.passed
+    ? el("p", {}, el("span", { class: "badge badge-danger" }, "Over"),
+      " This month's spending is over your amount, so we've emailed you. Payments still go through as normal.")
+    : el("p", { class: "muted" },
+      `${moneyFormat.format(alert.remaining)} left this month before we email you. Payments are never stopped.`);
+  return el("div", { class: "goal" },
+    el("div", { class: "goal-head" },
+      el("h3", {}, "Spending alert"),
+      el("div", { class: "button-row" },
+        el("button", { type: "button", onclick: () => openSpendingAlertDialog(account, alert) }, "Change"),
+        el("button", { type: "button", onclick: () => confirmRemoveSpendingAlert(account) }, "Remove"))),
+    el("p", { class: "goal-amounts" },
+      el("span", { class: "money" }, moneyFormat.format(alert.spentThisMonth)),
+      ` spent this month of ${moneyFormat.format(alert.amount)} · ${percent}%`),
+    el("div", {
+      class: `goal-bar spend-bar${alert.passed ? " spend-bar-over" : ""}`,
+      role: "progressbar",
+      "aria-label": `Spending alert: ${percent}% of the amount spent this month`,
+      "aria-valuemin": "0",
+      "aria-valuemax": "100",
+      "aria-valuenow": String(percent),
+    }, fill),
+    detail);
+}
+
+let spendingAlertAccount = null;
+
+function openSpendingAlertDialog(account, alert) {
+  spendingAlertAccount = account;
+  const form = $("spending-alert-form");
+  form.reset();
+  showFormError(form, null);
+  clearFieldErrors(form);
+  form.querySelector("[data-spending-alert-title]").textContent = alert ? "Change the spending alert" : "Set a spending alert";
+  if (alert) form.elements.amount.value = alert.amount;
+  $("spending-alert-dialog").showModal();
+}
+
+function confirmRemoveSpendingAlert(account) {
+  openConfirm("Remove the spending alert?",
+    "You won't get an email about this account's spending any more. You can set a new alert at any time.",
+    async () => {
+      await api(`/api/accounts/${account.id}/spending-alert`, { method: "DELETE" });
+      toast("Spending alert removed.");
+      await selectAccount(account.id);
+    }, "Remove");
+}
+
 /** Customers have a daily limit on the transfers they send themselves; staff transfers have none. */
 function allowanceText({ dailyLimit, remainingToday }) {
   const remaining = moneyFormat.format(remainingToday);
@@ -799,6 +863,7 @@ function accountPanel() {
     amountError,
     allowance ? el("p", { class: "muted allowance" }, allowanceText(allowance)) : null,
     spendingSummary(state.summary),
+    spendingAlertSection(account, state.spendingAlert),
     accountStatementForm(account),
     el("h3", { class: "spaced-top" }, "Transactions"),
     rows.length
@@ -2534,6 +2599,20 @@ $("goal-form").onsubmit = (event) => {
       },
     });
     toast("Goal saved.");
+    await selectAccount(account.id);
+  });
+};
+
+$("spending-alert-form").onsubmit = (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const account = spendingAlertAccount;
+  submitDialog($("spending-alert-dialog"), form, async () => {
+    await api(`/api/accounts/${account.id}/spending-alert`, {
+      method: "PUT",
+      body: { amount: form.elements.amount.value.trim().replace(/,/g, "") },
+    });
+    toast("Spending alert saved.");
     await selectAccount(account.id);
   });
 };

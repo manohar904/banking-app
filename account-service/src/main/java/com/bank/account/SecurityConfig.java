@@ -23,6 +23,9 @@ class SecurityConfig {
                 // A customer sets their own savings goals; @PreAuthorize keeps them to their own accounts.
                 .requestMatchers(HttpMethod.PUT, "/api/accounts/*/goal").hasAnyRole(ServiceSecurity.PEOPLE)
                 .requestMatchers(HttpMethod.DELETE, "/api/accounts/*/goal").hasAnyRole(ServiceSecurity.PEOPLE)
+                // Likewise their own spending alerts.
+                .requestMatchers(HttpMethod.PUT, "/api/accounts/*/spending-alert").hasAnyRole(ServiceSecurity.PEOPLE)
+                .requestMatchers(HttpMethod.DELETE, "/api/accounts/*/spending-alert").hasAnyRole(ServiceSecurity.PEOPLE)
                 .requestMatchers("/api/accounts", "/api/accounts/**").hasRole("STAFF")
                 // Loans: customers ask and may cancel their own request; staff decide; both read and
                 // repay. LoanService checks that a customer only touches their own loans.

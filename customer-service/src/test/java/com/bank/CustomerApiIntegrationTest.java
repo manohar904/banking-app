@@ -430,6 +430,25 @@ class CustomerApiIntegrationTest {
     }
 
     @Test
+    void aSpendingAlertIsEmailedEvenWithTransactionEmailsTurnedOff() throws Exception {
+        String email = uniqueEmail();
+        long customer = createCustomer(email);
+        setTransactionEmails(asStaff(put("/api/customers/{id}/transaction-emails", customer)), false);
+
+        // The shape account-service publishes: amount is what has gone out this month so far.
+        transactionEmails.handle("{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"SPENDING_ALERT_PASSED\","
+                + "\"data\":{\"customerId\":" + customer + ",\"amount\":1250.40,\"alertAmount\":1000.00,"
+                + "\"accountEnding\":\"7265\"}}");
+        transactionEmails.sendPending();
+
+        assertThat(emailsTo(email)).singleElement().satisfies(message -> {
+            assertThat(message.getSubject()).isEqualTo("You have spent 1,250.40 this month from your account ending 7265");
+            assertThat(message.getText()).contains("more than the 1,000.00 you asked to be told about")
+                    .contains("Payments still go through as normal.").doesNotContain("New balance");
+        });
+    }
+
+    @Test
     void aCardStatementEmailGivesTheMinimumPaymentAndOnlyComesWhenSomethingIsOwed() throws Exception {
         String email = uniqueEmail();
         long customer = createCustomer(email);

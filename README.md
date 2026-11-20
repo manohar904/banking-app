@@ -594,13 +594,59 @@ To recover on a new computer: set up the project and `.env` (with the same `BACK
 and `BACKUP_OFFSITE_DIR` pointing at the synced folder), start the stack, `fetch` the newest copy, then
 `verify` it and put it back with `scripts/restore-backup.sh`.
 
+## Real domain
+
+The bank can be reached on a domain you own, such as `https://bank.example.com`, through a
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/).
+The `cloudflared` container makes an outgoing connection to Cloudflare, so nothing is opened on the
+router, the home IP address stays hidden, and Cloudflare provides the public HTTPS certificate.
+[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/) sits in front:
+only the email addresses you list can reach even the sign-in page. Everything else stays on
+`localhost` as before. The site is only up while this computer and Docker are.
+
+The domain must use Cloudflare for its DNS. In the [Cloudflare dashboard](https://dash.cloudflare.com):
+
+1. **Zero Trust → Networks → Connectors → Create a tunnel**, type **Cloudflared**, name it `bank`.
+   On the install page, pick **Docker** and copy the token (the long text after `--token`).
+2. In the tunnel's **Published application routes** (called **Public hostnames** in older versions of
+   the dashboard), add a route: subdomain `bank`, your domain, service **HTTPS**, URL `gateway:8443`.
+   Under **Additional application settings → TLS**, set **CA Pool** to `/certs/ca/ca.crt`. That way
+   the tunnel checks the gateway's certificate against the stack's own authority. Leave **No TLS
+   Verify** off.
+3. **Zero Trust → Access controls → Applications → Add an application → Self-hosted**. Add
+   `bank.<your domain>` as its public hostname and give it a policy: action **Allow**, include
+   **Emails** with your address. Choose **One-time PIN** as the login method. A session of 24 hours
+   is a reasonable length.
+4. Add these to `.env`. The token is a password for the tunnel, so keep it out of Git and
+   chat messages:
+
+   ```
+   CLOUDFLARE_TUNNEL_TOKEN=<the token from step 1>
+   APP_BASE_URL=https://bank.<your domain>
+   GATEWAY_FORWARD_HEADERS=native
+   ```
+
+   `APP_BASE_URL` makes password-reset links point at the real address, and turns on HSTS for that
+   name only (localhost never gets it, so Grafana and Kibana stay reachable over plain HTTP).
+   `GATEWAY_FORWARD_HEADERS=native` makes the gateway read the browser's address from the tunnel's
+   `X-Forwarded-For`, so failed sign-ins are limited per visitor rather than for everyone at once.
+   That is safe here because the tunnel is the only way in from outside: the gateway's own ports are
+   published on this computer only (`127.0.0.1`).
+5. Start it, adding `--profile public` to the usual command:
+   `docker compose --profile monitoring --profile public up -d --no-build`. Give the gateway a
+   moment, then `docker compose ps cloudflared` shows `healthy`, and the tunnel shows **Healthy** in
+   the dashboard.
+
+Without `--profile public` the tunnel does not run and the bank is on `localhost` only, even with the
+token in `.env`. To take the bank off the internet: `docker compose stop cloudflared`.
+
 ## Before production
 
 This is set up for local development. Before real use:
 
 - Set your own `DB_PASSWORD`, the six `*_DB_PASSWORD` and `*_DB_OWNER_PASSWORD` values,
-  `REDIS_PASSWORD` and `GRAFANA_ADMIN_PASSWORD`. Give the gateway a certificate for its real domain
-  name from a public authority, and turn on HSTS there.
+  `REDIS_PASSWORD` and `GRAFANA_ADMIN_PASSWORD`. For a real domain, see "Real domain" above:
+  Cloudflare supplies the public certificate, and HSTS comes on with `APP_BASE_URL`.
 - Set your own passwords for Kafka and Elasticsearch (the `KAFKA_*_PASSWORD`, `ELASTIC_PASSWORD` and
   other values in `.env.example`). Kafka's three brokers run on one computer here; on real servers,
   put each on its own machine, or one machine failing still takes all three down.

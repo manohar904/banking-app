@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import com.bank.account.scheduled.ScheduledPaymentRepository;
 import com.bank.account.card.CardRepository;
 import com.bank.account.loan.LoanRepository;
+import com.bank.account.spending.SpendingAlerts;
 import com.bank.common.ConflictException;
 import com.bank.common.events.DomainEvents;
 import java.math.BigDecimal;
@@ -55,6 +56,9 @@ class AccountServiceTest {
 
     @Mock
     private ScheduledPaymentRepository scheduledPayments;
+
+    @Mock
+    private SpendingAlerts spendingAlerts;
 
     @InjectMocks
     private AccountService accountService;

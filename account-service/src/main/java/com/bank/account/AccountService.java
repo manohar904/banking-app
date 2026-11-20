@@ -9,6 +9,7 @@ import com.bank.account.loan.LoanRepository;
 import com.bank.account.loan.LoanStatus;
 import com.bank.account.scheduled.ScheduledPayment;
 import com.bank.account.scheduled.ScheduledPaymentRepository;
+import com.bank.account.spending.SpendingAlerts;
 import com.bank.common.ConflictException;
 import com.bank.common.ResourceNotFoundException;
 import com.bank.common.events.DomainEvents;
@@ -41,6 +42,7 @@ public class AccountService {
     private final LoanRepository loanRepository;
     private final CardRepository cardRepository;
     private final ScheduledPaymentRepository scheduledPayments;
+    private final SpendingAlerts spendingAlerts;
     private final SecureRandom random = new SecureRandom();
 
     public AccountResponse create(CreateAccountRequest request) {
@@ -138,6 +140,9 @@ public class AccountService {
         events.record(event, saved.getId(), Map.of("amount", amount, "balanceAfter", saved.getBalance(),
                 "transferId", transferId.toString(), "otherAccountId", other.getId(),
                 "customerId", saved.getCustomerId(), "accountEnding", accountEnding(saved)));
+        if (type == TransactionType.TRANSFER_OUT) {
+            spendingAlerts.moneyWentOut(saved);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -186,6 +191,9 @@ public class AccountService {
         events.record(type == TransactionType.DEPOSIT ? "MONEY_DEPOSITED" : "MONEY_WITHDRAWN", saved.getId(),
                 Map.of("amount", amount, "balanceAfter", saved.getBalance(),
                         "customerId", saved.getCustomerId(), "accountEnding", accountEnding(saved)));
+        if (type == TransactionType.WITHDRAWAL) {
+            spendingAlerts.moneyWentOut(saved);
+        }
         return AccountResponse.from(saved);
     }
 

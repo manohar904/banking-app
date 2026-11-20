@@ -327,6 +327,24 @@ API: `GET /api/accounts/{id}/goal` (204 when there is none), `PUT /api/accounts/
 `{"name", "targetAmount", "targetDate"}` (the date is optional and cannot be in the past), and
 `DELETE /api/accounts/{id}/goal`. Only savings accounts can have one.
 
+### Spending alerts
+
+Any account can have one spending alert: an amount of money out per calendar month (in
+`TRANSFER_LIMIT_TIMEZONE`) that the customer wants to hear about. Money out is what statements count:
+withdrawals, transfers sent, loan repayments and card payments. The first time a payment takes the month
+over the amount, the customer gets an email ("You have spent 1,250.40 this month from your account
+ending 7265"), once per month at most. It is sent even when staff have turned transaction emails off,
+because the customer asked for it. It never stops a payment. That is what the daily transfer limit and
+card limits are for.
+
+On the account's page, under **Money in and out**, **Set a spending alert** opens a form. The card then
+shows this month's spending against the amount with a progress bar, which turns red once it is over.
+Changing the amount starts afresh, so going over the new amount sends another email that month.
+The account's owner and staff can set one; deleting the account removes it.
+
+API: `GET /api/accounts/{id}/spending-alert` (204 when there is none), `PUT` with `{"amount"}`, and
+`DELETE`. Events: `SPENDING_ALERT_SET`, `SPENDING_ALERT_REMOVED`, `SPENDING_ALERT_PASSED`.
+
 ### Scheduled payments
 
 A customer (or staff, for them) can set up a monthly payment from one of their accounts to any account

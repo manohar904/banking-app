@@ -10,6 +10,7 @@ import com.bank.account.RetiredCustomers;
 import com.bank.account.card.CardDtos.CardResponse;
 import com.bank.account.card.CardDtos.CardStatementResponse;
 import com.bank.account.card.CardDtos.CardTransactionResponse;
+import com.bank.account.spending.SpendingAlerts;
 import com.bank.account.statement.StatementPdf;
 import com.bank.account.statement.StatementPdf.Column;
 import com.bank.common.ConflictException;
@@ -62,6 +63,7 @@ public class CardService {
     /** The per-customer lock that opening an account takes. */
     private final RetiredCustomers retiredCustomers;
     private final DomainEvents events;
+    private final SpendingAlerts spendingAlerts;
     private final BigDecimal maxLimit;
     private final CardStatementRepository statements;
     private final StatementTerms terms;
@@ -81,6 +83,7 @@ public class CardService {
     CardService(CardRepository cards, CardTransactionRepository cardLedger, AccountRepository accounts,
             AccountTransactionRepository accountLedger, CustomerServiceClient customerService,
             RetiredCustomers retiredCustomers, DomainEvents events, CardStatementRepository statements,
+            SpendingAlerts spendingAlerts,
             @Value("${bank.cards.max-limit}") BigDecimal maxLimit,
             @Value("${bank.cards.annual-interest-rate}") BigDecimal annualInterestRate,
             @Value("${bank.cards.minimum-payment-percent}") BigDecimal minimumPaymentPercent,
@@ -98,6 +101,7 @@ public class CardService {
         this.customerService = customerService;
         this.retiredCustomers = retiredCustomers;
         this.events = events;
+        this.spendingAlerts = spendingAlerts;
         this.maxLimit = maxLimit;
         this.clock = Clock.system(timeZone);
     }
@@ -189,6 +193,7 @@ public class CardService {
         events.record("CARD_PAYMENT_TAKEN", savedAccount.getId(), Map.of("amount", amount,
                 "balanceAfter", savedAccount.getBalance(), "cardId", saved.getId(),
                 "customerId", saved.getCustomerId(), "accountEnding", number.substring(number.length() - 4)));
+        spendingAlerts.moneyWentOut(savedAccount);
         return CardResponse.from(saved);
     }
 

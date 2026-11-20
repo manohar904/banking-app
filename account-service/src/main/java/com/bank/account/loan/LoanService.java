@@ -10,6 +10,7 @@ import com.bank.account.TransactionType;
 import com.bank.account.loan.LoanDtos.LoanOffer;
 import com.bank.account.loan.LoanDtos.LoanQuote;
 import com.bank.account.loan.LoanDtos.LoanResponse;
+import com.bank.account.spending.SpendingAlerts;
 import com.bank.common.ConflictException;
 import com.bank.common.ResourceNotFoundException;
 import com.bank.common.events.DomainEvents;
@@ -54,11 +55,13 @@ public class LoanService {
     private final RetiredCustomers customerLock;
     private final DomainEvents events;
     private final LoanTerms terms;
+    private final SpendingAlerts spendingAlerts;
     private final Clock clock;
 
     LoanService(LoanRepository loans, LoanRepaymentRepository repayments, AccountRepository accounts,
             AccountTransactionRepository ledger, RetiredCustomers customerLock, DomainEvents events, LoanTerms terms,
-            @Value("${bank.transfers.time-zone}") ZoneId timeZone) {
+            SpendingAlerts spendingAlerts, @Value("${bank.transfers.time-zone}") ZoneId timeZone) {
+        this.spendingAlerts = spendingAlerts;
         this.loans = loans;
         this.repayments = repayments;
         this.accounts = accounts;
@@ -221,6 +224,7 @@ public class LoanService {
                 "amount", repayment.amount(), "interest", repayment.interest(),
                 "remaining", repayment.remainingAfter()));
         events.record("LOAN_REPAYMENT_TAKEN", saved.getId(), moneyMoved(saved, repayment.amount(), loan.getId()));
+        spendingAlerts.moneyWentOut(saved);
         if (loan.getStatus() == LoanStatus.PAID_OFF) {
             events.record("LOAN_PAID_OFF", auditId(loan), Map.of("customerId", loan.getCustomerId()));
         }

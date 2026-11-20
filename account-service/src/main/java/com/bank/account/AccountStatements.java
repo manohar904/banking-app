@@ -12,7 +12,6 @@ import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -31,8 +30,7 @@ import org.springframework.web.server.ResponseStatusException;
 @Transactional(readOnly = true)
 public class AccountStatements {
 
-    private static final Set<TransactionType> MONEY_OUT = EnumSet.of(TransactionType.WITHDRAWAL,
-            TransactionType.TRANSFER_OUT, TransactionType.LOAN_REPAYMENT, TransactionType.CARD_PAYMENT);
+    private static final Set<TransactionType> MONEY_OUT = TransactionType.MONEY_OUT;
     private static final DateTimeFormatter MONTH = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.ROOT);
 
     /** A statement as a file. */

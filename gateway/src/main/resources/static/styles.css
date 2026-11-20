@@ -351,6 +351,9 @@ body.customer-view .layout { grid-template-columns: minmax(0, 1fr); max-width: 8
 }
 .goal-bar span { display: block; height: 100%; min-width: 0; border-radius: inherit; background: var(--card-savings); }
 .goal-bar-done span { background: var(--positive); }
+/* A spending alert reuses the goal's card and bar: checking colours, and red once over the amount. */
+.spend-bar span { background: var(--card-checking); }
+.spend-bar-over span { background: var(--negative); }
 
 .money-form {
   display: flex;
